@@ -1,0 +1,83 @@
+import { apiRequest } from "@/api/client";
+import type { MetadataPage } from "@/api/tables";
+
+// 标准字段定义接口，契约见后端 app/schemas/standard_fields.py。
+export type StandardFieldStatus = "DRAFT" | "CONFIRMED" | "DEPRECATED";
+
+export interface StandardField {
+  id: number;
+  standard_name: string;
+  business_meaning: string | null;
+  logical_type: string;
+  raw_type: string | null;
+  status: StandardFieldStatus;
+  source_type: string;
+  has_conflict: boolean;
+  type_distribution: Record<string, number> | null;
+  candidate_count: number;
+  version: number;
+}
+
+export interface StandardFieldItem {
+  column_urn: string;
+  db_name: string | null;
+  table_name: string | null;
+  column_name: string | null;
+  raw_type: string | null;
+  logical_type: string | null;
+  conforms: boolean | null;
+}
+
+export interface StandardFieldDetail extends StandardField {
+  items: StandardFieldItem[];
+}
+
+export interface GenerateSummary {
+  generated: number;
+  updated: number;
+  skipped_confirmed: number;
+  skipped_conflict: number;
+}
+
+export interface ConfirmPayload {
+  raw_type: string;
+  logical_type: string;
+  business_meaning: string;
+}
+
+export interface ListStandardFieldsParams {
+  status?: StandardFieldStatus;
+  conflict?: boolean;
+  q?: string;
+  page: number;
+  pageSize: number;
+}
+
+export function listStandardFields(
+  params: ListStandardFieldsParams,
+): Promise<MetadataPage<StandardField>> {
+  return apiRequest<MetadataPage<StandardField>>("/standard-fields", {
+    params: {
+      status: params.status,
+      conflict: params.conflict,
+      q: params.q,
+      page: params.page,
+      page_size: params.pageSize,
+    },
+  });
+}
+
+export function getStandardField(id: number): Promise<StandardFieldDetail> {
+  return apiRequest<StandardFieldDetail>(`/standard-fields/${id}`);
+}
+
+export function confirmStandardField(id: number, payload: ConfirmPayload): Promise<StandardField> {
+  return apiRequest<StandardField>(`/standard-fields/${id}/confirm`, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function generateStandardFields(): Promise<GenerateSummary> {
+  return apiRequest<GenerateSummary>("/standard-fields/generate", { method: "POST" });
+}

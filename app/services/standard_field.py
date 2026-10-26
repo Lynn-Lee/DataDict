@@ -8,12 +8,20 @@
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import ConflictError, NotFoundError
 from app.models.knowledge import CommonColumnBlacklist, StandardField, StandardFieldItem
-from app.models.metadata import ColumnMeta
+from app.models.metadata import ColumnMeta, TableMeta
+from app.schemas.standard_fields import (
+    ConfirmStandardFieldPayload,
+    StandardFieldDetailOut,
+    StandardFieldItemOut,
+    StandardFieldOut,
+)
 
 
 @dataclass
@@ -131,31 +139,15 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
 
         distribution = candidate.type_distribution
         if current is None:
-            if candidate.has_conflict:
-                # 冲突组直接建 DRAFT 但不填推荐类型，等人工裁决
-                session.add(
-                    StandardField(
-                        standard_name=candidate.column_name,
-                        business_meaning=candidate.suggested_meaning,
-                        logical_type=candidate.recommended_logical_type or "STRING",
-                        raw_type=None,
-                        status="DRAFT",
-                        source_type="CLUSTER",
-                        has_conflict=True,
-                        type_distribution=distribution,
-                        candidate_count=candidate.candidate_count,
-                    )
-                )
-                summary.skipped_conflict += 1
-                continue
             standard = StandardField(
                 standard_name=candidate.column_name,
                 business_meaning=candidate.suggested_meaning,
                 logical_type=candidate.recommended_logical_type or "STRING",
-                raw_type=candidate.recommended_raw_type,
+                # 冲突组不给自动推荐类型，等人工裁决
+                raw_type=None if candidate.has_conflict else candidate.recommended_raw_type,
                 status="DRAFT",
                 source_type="CLUSTER",
-                has_conflict=False,
+                has_conflict=candidate.has_conflict,
                 type_distribution=distribution,
                 candidate_count=candidate.candidate_count,
             )
@@ -166,6 +158,8 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
                 for urn in candidate.column_urns
             )
             summary.generated += 1
+            if candidate.has_conflict:
+                summary.skipped_conflict += 1
         else:
             current.business_meaning = current.business_meaning or candidate.suggested_meaning
             current.type_distribution = distribution
@@ -175,15 +169,15 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
             if not current.has_conflict:
                 current.logical_type = candidate.recommended_logical_type or current.logical_type
                 current.raw_type = candidate.recommended_raw_type
-                await session.execute(
-                    delete(StandardFieldItem).where(
-                        StandardFieldItem.standard_field_id == current.id
-                    )
-                )
-                session.add_all(
-                    StandardFieldItem(standard_field_id=current.id, column_urn=urn)
-                    for urn in candidate.column_urns
-                )
+            else:
+                current.raw_type = None
+            await session.execute(
+                delete(StandardFieldItem).where(StandardFieldItem.standard_field_id == current.id)
+            )
+            session.add_all(
+                StandardFieldItem(standard_field_id=current.id, column_urn=urn)
+                for urn in candidate.column_urns
+            )
             summary.updated += 1
 
     return summary
@@ -194,3 +188,135 @@ async def count_candidates(session: AsyncSession) -> int:
         select(func.count()).select_from(StandardField).where(StandardField.status == "DRAFT")
     )
     return int(result.scalar_one())
+
+
+def _to_out(sf: StandardField) -> StandardFieldOut:
+    return StandardFieldOut(
+        id=sf.id,
+        standard_name=sf.standard_name,
+        business_meaning=sf.business_meaning,
+        logical_type=sf.logical_type,
+        raw_type=sf.raw_type,
+        status=sf.status,
+        source_type=sf.source_type,
+        has_conflict=sf.has_conflict,
+        type_distribution=sf.type_distribution,
+        candidate_count=sf.candidate_count,
+        version=sf.version,
+    )
+
+
+async def list_standard_fields(
+    session: AsyncSession,
+    *,
+    status_filter: str | None = None,
+    conflict_only: bool = False,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[int, list[StandardFieldOut]]:
+    stmt = select(StandardField)
+    if status_filter:
+        stmt = stmt.where(StandardField.status == status_filter)
+    if conflict_only:
+        stmt = stmt.where(StandardField.has_conflict.is_(True))
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                StandardField.standard_name.ilike(like),
+                StandardField.business_meaning.ilike(like),
+            )
+        )
+    total = int(
+        (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    )
+    rows = await session.execute(
+        stmt.order_by(StandardField.candidate_count.desc(), StandardField.id)
+        .limit(page_size)
+        .offset((page - 1) * page_size)
+    )
+    return total, [_to_out(sf) for sf in rows.scalars()]
+
+
+async def get_standard_field_detail(
+    session: AsyncSession, standard_id: int
+) -> StandardFieldDetailOut:
+    sf = await session.get(StandardField, standard_id)
+    if sf is None:
+        raise NotFoundError("标准字段定义不存在", detail={"id": standard_id})
+
+    rows = await session.execute(
+        select(
+            StandardFieldItem.column_urn,
+            StandardFieldItem.conforms,
+            ColumnMeta.column_name,
+            ColumnMeta.raw_type,
+            ColumnMeta.logical_type,
+            TableMeta.db_name,
+            TableMeta.table_name,
+        )
+        .select_from(StandardFieldItem)
+        .join(ColumnMeta, ColumnMeta.urn == StandardFieldItem.column_urn)
+        .join(TableMeta, TableMeta.urn == ColumnMeta.table_urn)
+        .where(StandardFieldItem.standard_field_id == standard_id)
+        .order_by(TableMeta.db_name, TableMeta.table_name, ColumnMeta.column_name)
+    )
+    items = [
+        StandardFieldItemOut(
+            column_urn=urn,
+            db_name=db_name,
+            table_name=table_name,
+            column_name=column_name,
+            raw_type=raw_type,
+            logical_type=logical_type,
+            conforms=conforms,
+        )
+        for urn, conforms, column_name, raw_type, logical_type, db_name, table_name in rows
+    ]
+    out = StandardFieldDetailOut(**_to_out(sf).model_dump(), items=items)
+    return out
+
+
+async def confirm_standard_field(
+    session: AsyncSession,
+    standard_id: int,
+    payload: ConfirmStandardFieldPayload,
+    *,
+    operator_id: int | None = None,
+) -> StandardFieldOut:
+    """人工确认定版：写入最终推荐类型与释义，并回算存量字段 conforms。"""
+    sf = await session.get(StandardField, standard_id)
+    if sf is None:
+        raise NotFoundError("标准字段定义不存在", detail={"id": standard_id})
+    if sf.status != "DRAFT":
+        raise ConflictError("该标准定义已定版或已废弃，不能重复确认", detail={"status": sf.status})
+
+    sf.raw_type = payload.raw_type
+    sf.logical_type = payload.logical_type
+    sf.business_meaning = payload.business_meaning
+    sf.status = "CONFIRMED"
+    sf.has_conflict = False
+    sf.confirmed_by = operator_id
+    sf.confirmed_at = datetime.now(UTC)
+
+    items = (
+        (
+            await session.execute(
+                select(StandardFieldItem).where(StandardFieldItem.standard_field_id == sf.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if items:
+        urns = [item.column_urn for item in items]
+        col_rows = await session.execute(
+            select(ColumnMeta.urn, ColumnMeta.raw_type).where(ColumnMeta.urn.in_(urns))
+        )
+        raw_by_urn = dict(col_rows.all())
+        for item in items:
+            item.conforms = raw_by_urn.get(item.column_urn) == payload.raw_type
+
+    await session.flush()
+    return _to_out(sf)

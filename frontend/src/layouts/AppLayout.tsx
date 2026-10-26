@@ -1,4 +1,4 @@
-import { DatabaseOutlined, LogoutOutlined, SearchOutlined } from "@ant-design/icons";
+import { ApartmentOutlined, DatabaseOutlined, LogoutOutlined, SearchOutlined } from "@ant-design/icons";
 import { Button, Layout, Menu, Space, Typography } from "antd";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -9,6 +9,11 @@ const { Header, Sider, Content } = Layout;
 const MENU_ITEMS = [
   { key: "/search", icon: <SearchOutlined />, label: <Link to="/search">搜索</Link> },
   { key: "/tables", icon: <DatabaseOutlined />, label: <Link to="/tables">表目录</Link> },
+  {
+    key: "/standard-fields",
+    icon: <ApartmentOutlined />,
+    label: <Link to="/standard-fields">标准定义</Link>,
+  },
 ];
 
 export default function AppLayout() {
