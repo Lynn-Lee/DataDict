@@ -64,3 +64,24 @@ export function listColumns(
 export function getTableDdl(urn: string): Promise<TableDdl> {
   return apiRequest<TableDdl>("/tables/ddl", { params: { urn } });
 }
+
+export interface ListTablesParams {
+  sourceId?: number;
+  dbName?: string;
+  keyword?: string;
+  page: number;
+  pageSize: number;
+}
+
+// 不传 urn 时分页返回表列表，可按数据源 / 库名（精确）/ 关键词（表名或注释）筛选。
+export function listTables(params: ListTablesParams): Promise<MetadataPage<TableDetail>> {
+  return apiRequest<MetadataPage<TableDetail>>("/tables", {
+    params: {
+      source_id: params.sourceId,
+      db_name: params.dbName,
+      keyword: params.keyword,
+      page: params.page,
+      page_size: params.pageSize,
+    },
+  });
+}

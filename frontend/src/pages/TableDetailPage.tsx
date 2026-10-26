@@ -26,30 +26,9 @@ import {
 import { ApiError } from "@/api/client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/QueryStates";
 import { getTable, getTableDdl, listColumns, type ColumnMeta } from "@/api/tables";
+import { formatBytes, formatCount } from "@/utils/format";
 
 const PAGE_SIZE = 50;
-
-// data_size 后端以字节计，转人类可读。
-function formatBytes(value: number | null): string {
-  if (value == null) {
-    return "—";
-  }
-  if (value < 1024) {
-    return `${value} B`;
-  }
-  const units = ["KB", "MB", "GB", "TB"];
-  let size = value / 1024;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size.toFixed(1)} ${units[unit]}`;
-}
-
-function formatCount(value: number | null): string {
-  return value == null ? "—" : value.toLocaleString();
-}
 
 // 长文本单元格：截断 + Tooltip，避免撑破固定列宽。
 function EllipsisCell({ text }: { text: string | null }) {
