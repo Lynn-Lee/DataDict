@@ -96,7 +96,7 @@ class MySQLCollector(BaseCollector):
                 ordinal=int(row["ordinal"]),
                 raw_type=str(row["raw_type"]),
                 logical_type=self.normalize_type(str(row["raw_type"])),
-                data_length=_optional_int(row["data_length"]),
+                data_length=_optional_length(row["data_length"]),
                 num_precision=_optional_int(row["num_precision"]),
                 num_scale=_optional_int(row["num_scale"]),
                 is_nullable=str(row["is_nullable"]).upper() == "YES",
@@ -191,6 +191,15 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+_INT32_MAX = 2**31 - 1
+
+
+def _optional_length(value: Any) -> int | None:
+    # longtext 报 4294967295，而 column_meta.data_length 是 INTEGER，钳到 int32
+    number = _optional_int(value)
+    return None if number is None else min(number, _INT32_MAX)
 
 
 def _split_columns(value: Any) -> list[str]:

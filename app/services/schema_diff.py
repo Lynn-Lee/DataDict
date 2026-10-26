@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Protocol
 
 from sqlalchemy import or_, select, update
@@ -312,7 +313,16 @@ def _index_snapshot(row: dict[str, Any]) -> dict[str, Any]:
 
 def _snapshot(row: dict[str, Any]) -> dict[str, Any]:
     ignored = {"synced_at", "deleted_at"}
-    return {key: value for key, value in row.items() if key not in ignored}
+    # 写入 JSONB：真库返回的 datetime（db_created_at）、Decimal 不能直接序列化
+    return {key: _json_safe(value) for key, value in row.items() if key not in ignored}
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
 
 
 def _index_key(row: dict[str, Any]) -> str:

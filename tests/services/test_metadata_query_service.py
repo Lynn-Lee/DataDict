@@ -1,5 +1,5 @@
 from app.schemas.metadata_queries import ColumnOut, TableOut
-from app.services.metadata_queries import SQLAlchemyMetadataQueryService
+from app.services.metadata_queries import SQLAlchemyMetadataQueryService, _table_out
 
 
 def test_build_table_ddl_uses_table_and_columns() -> None:
@@ -61,3 +61,21 @@ def test_build_table_ddl_uses_table_and_columns() -> None:
         '  PRIMARY KEY ("id")\n'
         ");"
     )
+
+
+def test_table_out_accepts_search_row_without_is_deleted() -> None:
+    # 表搜索语句只选 6 个字段 + score，且已按 is_deleted=false 过滤，行里没有 is_deleted
+    table = _table_out(
+        {
+            "urn": "mysql:prod:operdb:orders",
+            "source_id": 1,
+            "db_name": "operdb",
+            "table_name": "orders",
+            "table_type": "TABLE",
+            "table_comment": "订单表",
+            "score": 0.5,
+        }
+    )
+
+    assert table.is_deleted is False
+    assert table.score == 0.5

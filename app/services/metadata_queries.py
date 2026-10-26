@@ -303,7 +303,7 @@ def _table_out(row: dict[str, Any]) -> TableOut:
         row_count=int(row["row_count"]) if row.get("row_count") is not None else None,
         data_size=int(row["data_size"]) if row.get("data_size") is not None else None,
         dw_layer=cast(str | None, row.get("dw_layer")),
-        is_deleted=bool(row["is_deleted"]),
+        is_deleted=bool(row.get("is_deleted", False)),  # 表搜索已过滤删除表，行里不带该键
         score=float(row["score"]) if row.get("score") is not None else None,
     )
 

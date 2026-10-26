@@ -174,6 +174,36 @@ async def test_list_columns_reads_column_comments_and_normalizes_types(
     assert params == ("meta_test_db",)
 
 
+async def test_list_columns_clamps_longtext_length_to_int32(
+    mysql_calls: list[tuple[str, tuple[Any, ...]]],
+) -> None:
+    # MySQL/TiDB 对 longtext 报 CHARACTER_MAXIMUM_LENGTH=4294967295，超出 PG INTEGER 列范围
+    _set_rows(
+        [
+            {
+                "db_name": "meta_test_db",
+                "table_name": "orders",
+                "column_name": "remark",
+                "ordinal": 1,
+                "raw_type": "longtext",
+                "data_length": 4294967295,
+                "num_precision": None,
+                "num_scale": None,
+                "is_nullable": "YES",
+                "default_value": None,
+                "raw_comment": "备注",
+                "column_key": "",
+                "extra": "",
+            }
+        ]
+    )
+
+    columns = await MySQLCollector(_config()).list_columns("meta_test_db")
+
+    assert columns[0].data_length == 2147483647
+    assert columns[0].raw_type == "longtext"
+
+
 async def test_list_indexes_reads_ordered_index_columns_with_one_batch_query(
     mysql_calls: list[tuple[str, tuple[Any, ...]]],
 ) -> None:

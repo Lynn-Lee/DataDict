@@ -260,3 +260,30 @@ async def test_schema_change_logger_limits_existing_tables_to_scanned_databases(
     assert "table_meta.db_name IN" in session.statements[0]
     assert "table_meta.is_deleted IS false" in session.statements[0]
     assert "column_meta.is_deleted IS false" in session.statements[1]
+
+
+def test_table_snapshot_is_json_serializable_with_real_db_created_at() -> None:
+    # 真库返回的 db_created_at 是 datetime，写入 JSONB 的 before/after_value 必须可序列化
+    import json
+
+    changes = detect_schema_changes(
+        existing_tables=[],
+        existing_columns=[],
+        existing_indexes=[],
+        new_tables=[
+            {
+                "urn": "mysql:prod:operdb:orders",
+                "table_name": "orders",
+                "db_created_at": datetime(2026, 1, 2, 3, 4, 5),
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+        new_columns=[],
+        new_indexes=[],
+        detected_at=datetime.now(UTC),
+    )
+
+    added = next(c for c in changes if c["change_type"] == "TABLE_ADDED")
+    json.dumps(added["after_value"])
+    assert added["after_value"]["db_created_at"] == "2026-01-02T03:04:05"
+    assert "synced_at" not in added["after_value"]
