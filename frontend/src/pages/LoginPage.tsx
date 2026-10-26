@@ -43,7 +43,7 @@ export default function LoginPage() {
     >
       <Card style={{ width: 360 }}>
         <Typography.Title level={3} style={{ textAlign: "center" }}>
-          MetaHub
+          DataDict
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ textAlign: "center" }}>
           元数据知识库

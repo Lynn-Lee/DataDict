@@ -1,4 +1,4 @@
-name: metahub-intranet
+name: datadict-intranet
 
 # 内网单机测试部署。变量来自同目录的 .env（复制自 deploy.env.example）。
 # 用法见 docs/DEPLOY.md。
@@ -8,17 +8,17 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: metahub
+      POSTGRES_DB: datadict
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}
-      METAHUB_WEB_PASSWORD: ${METAHUB_WEB_PASSWORD:?必须设置 METAHUB_WEB_PASSWORD}
-      METAHUB_COLLECTOR_PASSWORD: ${METAHUB_COLLECTOR_PASSWORD:?必须设置 METAHUB_COLLECTOR_PASSWORD}
+      DATADICT_WEB_PASSWORD: ${DATADICT_WEB_PASSWORD:?必须设置 DATADICT_WEB_PASSWORD}
+      DATADICT_COLLECTOR_PASSWORD: ${DATADICT_COLLECTOR_PASSWORD:?必须设置 DATADICT_COLLECTOR_PASSWORD}
       TZ: Asia/Shanghai
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d metahub"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d datadict"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -39,7 +39,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: metahub:intranet
+    image: datadict:intranet
     restart: unless-stopped
     depends_on:
       postgres:
@@ -53,9 +53,9 @@ services:
       DEBUG: "false"
       TZ: Asia/Shanghai
       # 迁移专用高权限连接，只在启动时使用；运行时走下面两个业务角色
-      ALEMBIC_DB_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/metahub
-      DB_URL_WEB: postgresql+asyncpg://metahub_web:${METAHUB_WEB_PASSWORD}@postgres:5432/metahub
-      DB_URL_COLLECTOR: postgresql+asyncpg://metahub_collector:${METAHUB_COLLECTOR_PASSWORD}@postgres:5432/metahub
+      ALEMBIC_DB_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/datadict
+      DB_URL_WEB: postgresql+asyncpg://datadict_web:${DATADICT_WEB_PASSWORD}@postgres:5432/datadict
+      DB_URL_COLLECTOR: postgresql+asyncpg://datadict_collector:${DATADICT_COLLECTOR_PASSWORD}@postgres:5432/datadict
       REDIS_URL: redis://redis:6379/0
       CREDENTIAL_SECRET_KEY: ${CREDENTIAL_SECRET_KEY:?必须设置 CREDENTIAL_SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?必须设置 JWT_SECRET_KEY}

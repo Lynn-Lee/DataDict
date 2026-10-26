@@ -1,6 +1,6 @@
 """统一异常与错误码。
 
-错误码格式 `METAHUB-<四位>`，按域分段：
+错误码格式 `DATADICT-<四位>`，按域分段：
     1xxx 通用    2xxx 数据源与采集    3xxx 标注    4xxx 检索    5xxx 权限
 错误码一旦对外发布就不再变更含义——它会被 API 消费方写进重试/告警逻辑。
 """
@@ -16,37 +16,37 @@ from loguru import logger
 
 class ErrorCode(StrEnum):
     # 1xxx 通用
-    INTERNAL_ERROR = "METAHUB-1000"
-    INVALID_PARAM = "METAHUB-1001"
-    NOT_FOUND = "METAHUB-1002"
-    CONFLICT = "METAHUB-1003"
-    INVALID_URN = "METAHUB-1004"
+    INTERNAL_ERROR = "DATADICT-1000"
+    INVALID_PARAM = "DATADICT-1001"
+    NOT_FOUND = "DATADICT-1002"
+    CONFLICT = "DATADICT-1003"
+    INVALID_URN = "DATADICT-1004"
 
     # 2xxx 数据源与采集
-    DATASOURCE_NOT_FOUND = "METAHUB-2000"
-    UNSUPPORTED_DATASOURCE = "METAHUB-2001"
-    DATASOURCE_CONNECT_FAILED = "METAHUB-2002"
-    DATASOURCE_PERMISSION_DENIED = "METAHUB-2003"
-    SYNC_ALREADY_RUNNING = "METAHUB-2004"
-    COLLECT_TIMEOUT = "METAHUB-2005"
+    DATASOURCE_NOT_FOUND = "DATADICT-2000"
+    UNSUPPORTED_DATASOURCE = "DATADICT-2001"
+    DATASOURCE_CONNECT_FAILED = "DATADICT-2002"
+    DATASOURCE_PERMISSION_DENIED = "DATADICT-2003"
+    SYNC_ALREADY_RUNNING = "DATADICT-2004"
+    COLLECT_TIMEOUT = "DATADICT-2005"
 
     # 3xxx 标注
-    ANNOTATION_NOT_FOUND = "METAHUB-3000"
+    ANNOTATION_NOT_FOUND = "DATADICT-3000"
     # 试图通过标注接口写入采集层字段（raw_type / column_name 等）。
     # 见 DEV-TASKS T5.1 验收标准。
-    ANNOTATION_READONLY_FIELD = "METAHUB-3001"
-    ANNOTATION_MERGE_CONFLICT = "METAHUB-3002"
-    ANNOTATION_BATCH_FAILED = "METAHUB-3003"
+    ANNOTATION_READONLY_FIELD = "DATADICT-3001"
+    ANNOTATION_MERGE_CONFLICT = "DATADICT-3002"
+    ANNOTATION_BATCH_FAILED = "DATADICT-3003"
 
     # 4xxx 检索
-    QUERY_TOO_SHORT = "METAHUB-4000"
+    QUERY_TOO_SHORT = "DATADICT-4000"
 
     # 5xxx 权限
-    UNAUTHENTICATED = "METAHUB-5000"
-    FORBIDDEN = "METAHUB-5001"
+    UNAUTHENTICATED = "DATADICT-5000"
+    FORBIDDEN = "DATADICT-5001"
 
 
-class MetaHubError(Exception):
+class DataDictError(Exception):
     """所有业务异常的基类。"""
 
     status_code: int = status.HTTP_400_BAD_REQUEST
@@ -58,22 +58,22 @@ class MetaHubError(Exception):
         self.detail = detail or {}
 
 
-class NotFoundError(MetaHubError):
+class NotFoundError(DataDictError):
     status_code = status.HTTP_404_NOT_FOUND
     code = ErrorCode.NOT_FOUND
 
 
-class ConflictError(MetaHubError):
+class ConflictError(DataDictError):
     status_code = status.HTTP_409_CONFLICT
     code = ErrorCode.CONFLICT
 
 
-class ForbiddenError(MetaHubError):
+class ForbiddenError(DataDictError):
     status_code = status.HTTP_403_FORBIDDEN
     code = ErrorCode.FORBIDDEN
 
 
-class UnauthenticatedError(MetaHubError):
+class UnauthenticatedError(DataDictError):
     status_code = status.HTTP_401_UNAUTHORIZED
     code = ErrorCode.UNAUTHENTICATED
 
@@ -83,12 +83,12 @@ class UnauthenticatedError(MetaHubError):
 HTTP_422 = 422
 
 
-class InvalidUrnError(MetaHubError):
+class InvalidUrnError(DataDictError):
     status_code = HTTP_422
     code = ErrorCode.INVALID_URN
 
 
-class UnsupportedDataSourceError(MetaHubError):
+class UnsupportedDataSourceError(DataDictError):
     code = ErrorCode.UNSUPPORTED_DATASOURCE
 
 
@@ -96,7 +96,7 @@ class SyncAlreadyRunningError(ConflictError):
     code = ErrorCode.SYNC_ALREADY_RUNNING
 
 
-class AnnotationReadonlyFieldError(MetaHubError):
+class AnnotationReadonlyFieldError(DataDictError):
     """标注接口收到了采集层字段。
 
     采集层与知识层的隔离有三道防线：数据库角色权限（最硬）、写入路径分离、
@@ -107,7 +107,7 @@ class AnnotationReadonlyFieldError(MetaHubError):
     code = ErrorCode.ANNOTATION_READONLY_FIELD
 
 
-class AnnotationBatchError(MetaHubError):
+class AnnotationBatchError(DataDictError):
     status_code = status.HTTP_400_BAD_REQUEST
     code = ErrorCode.ANNOTATION_BATCH_FAILED
 
@@ -120,8 +120,8 @@ def _error_body(code: str, message: str, detail: dict[str, Any] | None = None) -
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    @app.exception_handler(MetaHubError)
-    async def _handle_metahub_error(_: Request, exc: MetaHubError) -> JSONResponse:
+    @app.exception_handler(DataDictError)
+    async def _handle_datadict_error(_: Request, exc: DataDictError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content=_error_body(exc.code, exc.message, exc.detail),

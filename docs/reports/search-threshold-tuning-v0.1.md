@@ -1,4 +1,4 @@
-# MetaHub V0.1 检索阈值调优报告
+# DataDict V0.1 检索阈值调优报告
 
 日期：2026-08-06
 
@@ -48,7 +48,7 @@ V0.1 继续采用数据库级 `pg_trgm.similarity_threshold = 0.10`。
 阈值已在迁移 `alembic/versions/20260806_0005_search_similarity_threshold.py` 中以数据库级配置写入：
 
 ```sql
-ALTER DATABASE metahub SET pg_trgm.similarity_threshold = 0.1;
+ALTER DATABASE datadict SET pg_trgm.similarity_threshold = 0.1;
 ```
 
 没有在应用代码检索路径使用会话级 `SET`。

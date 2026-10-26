@@ -14,8 +14,8 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 _VALID: dict[str, Any] = {
-    "DB_URL_WEB": "postgresql+asyncpg://metahub_web:pw@localhost:5432/metahub",
-    "DB_URL_COLLECTOR": "postgresql+asyncpg://metahub_collector:pw@localhost:5432/metahub",
+    "DB_URL_WEB": "postgresql+asyncpg://datadict_web:pw@localhost:5432/datadict",
+    "DB_URL_COLLECTOR": "postgresql+asyncpg://datadict_collector:pw@localhost:5432/datadict",
     "REDIS_URL": "redis://localhost:6379/0",
     "CREDENTIAL_SECRET_KEY": "x" * 32,
     "JWT_SECRET_KEY": "y" * 32,
@@ -37,7 +37,7 @@ def _build(**overrides: Any) -> Settings:
 @pytest.mark.usefixtures("isolated_env")
 def test_valid_settings() -> None:
     settings = _build()
-    assert settings.APP_NAME == "metahub"
+    assert settings.APP_NAME == "datadict"
     assert settings.ENV == "local"
     assert settings.is_prod is False
 
@@ -58,7 +58,7 @@ def test_same_db_role_is_rejected() -> None:
     且不会有任何报错——标注被覆盖时无从察觉，属于最不该静默失败的一处配置。
     """
     with pytest.raises(ValidationError, match="相同的数据库角色"):
-        _build(DB_URL_COLLECTOR="postgresql+asyncpg://metahub_web:pw@localhost:5432/metahub")
+        _build(DB_URL_COLLECTOR="postgresql+asyncpg://datadict_web:pw@localhost:5432/datadict")
 
 
 @pytest.mark.usefixtures("isolated_env")

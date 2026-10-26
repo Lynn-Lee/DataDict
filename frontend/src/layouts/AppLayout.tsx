@@ -36,7 +36,7 @@ export default function AppLayout() {
             fontWeight: 600,
           }}
         >
-          MetaHub
+          DataDict
         </div>
         <Menu
           mode="inline"

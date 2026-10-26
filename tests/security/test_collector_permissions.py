@@ -24,8 +24,8 @@ from app.models import metadata as metadata_models
 
 GRANTS_SQL = Path("deploy/grants.sql")
 
-_COLLECTOR_WRITE_GRANT = ("GRANT SELECT, INSERT, UPDATE ON", "TO metahub_collector;")
-_COLLECTOR_WRITE_REVOKE = ("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON", "FROM metahub_collector;")
+_COLLECTOR_WRITE_GRANT = ("GRANT SELECT, INSERT, UPDATE ON", "TO datadict_collector;")
+_COLLECTOR_WRITE_REVOKE = ("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON", "FROM datadict_collector;")
 
 
 def _model_tables(module: ModuleType) -> set[str]:

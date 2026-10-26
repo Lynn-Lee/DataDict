@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Query, Response, status
 from pydantic import ValidationError
 
-from app.core.exceptions import AnnotationBatchError, AnnotationReadonlyFieldError, MetaHubError
+from app.core.exceptions import AnnotationBatchError, AnnotationReadonlyFieldError, DataDictError
 from app.db.session import get_web_session
 from app.schemas.annotations import (
     FieldAnnotationOut,
@@ -91,7 +91,7 @@ async def upsert_field_annotation(
     try:
         payload = FieldAnnotationPayload.model_validate(raw_payload)
     except ValidationError as exc:
-        raise MetaHubError("请求参数校验失败", detail={"errors": exc.errors()}) from exc
+        raise DataDictError("请求参数校验失败", detail={"errors": exc.errors()}) from exc
     service = SQLAlchemyAnnotationService()
     return await service.upsert_field_annotation(session, urn=urn, payload=payload)
 
@@ -102,7 +102,7 @@ async def upsert_field_annotation(
     summary="表内批量标注字段",
     description=(
         "一次提交同一张表内多个字段的业务标注。任一字段失败时整体回滚，"
-        "并通过 METAHUB-3003 返回逐字段错误。"
+        "并通过 DATADICT-3003 返回逐字段错误。"
     ),
 )
 async def upsert_table_field_annotations(

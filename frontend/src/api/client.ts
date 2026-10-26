@@ -1,9 +1,9 @@
 // 统一 API 客户端：注入 Bearer 令牌，解析后端 {code, message} 错误体。
-// 后端错误码见 app/core/exceptions.py（METAHUB-xxxx）。
+// 后端错误码见 app/core/exceptions.py（DATADICT-xxxx）。
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api/v1";
 
-const TOKEN_KEY = "metahub_token";
+const TOKEN_KEY = "datadict_token";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

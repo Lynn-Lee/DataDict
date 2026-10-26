@@ -12,8 +12,8 @@ _SECRET = "auth_service_test_secret_key_min_32_chars"
 
 def _settings() -> Settings:
     return Settings(
-        DB_URL_WEB="postgresql+asyncpg://metahub_web:pw@localhost:5432/metahub",
-        DB_URL_COLLECTOR="postgresql+asyncpg://metahub_collector:pw@localhost:5432/metahub",
+        DB_URL_WEB="postgresql+asyncpg://datadict_web:pw@localhost:5432/datadict",
+        DB_URL_COLLECTOR="postgresql+asyncpg://datadict_collector:pw@localhost:5432/datadict",
         REDIS_URL="redis://localhost:6379/0",
         CREDENTIAL_SECRET_KEY="credential_secret_key_at_least_32_chars_x",
         JWT_SECRET_KEY=_SECRET,

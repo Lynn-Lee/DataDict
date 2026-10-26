@@ -23,7 +23,7 @@ logs: ## 查看依赖服务日志
 	docker compose logs -f
 
 psql: ## 用超级用户连本地库
-	docker compose exec postgres psql -U postgres -d metahub
+	docker compose exec postgres psql -U postgres -d datadict
 
 run: ## 启动开发服务器
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

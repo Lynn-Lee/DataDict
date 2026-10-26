@@ -2,7 +2,7 @@
 
 适用：一台 Linux 机器 + Docker Compose，用于内网功能测试。不是生产高可用方案。
 
-部署内容：PostgreSQL（pgvector/pg16）、Redis、MetaHub 应用（单镜像，后端同源托管前端静态资源）。
+部署内容：PostgreSQL（pgvector/pg16）、Redis、DataDict 应用（单镜像，后端同源托管前端静态资源）。
 只有应用端口对外，PostgreSQL 和 Redis 仅在 compose 内部网络可达。
 
 ## 前置条件
@@ -14,7 +14,7 @@
 ## 部署步骤
 
 ```bash
-git clone <仓库地址> metahub && cd metahub/deploy
+git clone <仓库地址> datadict && cd datadict/deploy
 cp deploy.env.example .env
 ```
 
@@ -58,7 +58,7 @@ curl http://localhost:8000/api/v1/health
 | 升级版本 | `git pull && docker compose -f docker-compose.intranet.yml up -d --build`（启动时自动迁移） |
 | 停止（保留数据） | `docker compose -f docker-compose.intranet.yml down` |
 | 清空重来 | `docker compose -f docker-compose.intranet.yml down -v`（**删除全部数据**） |
-| 备份数据库 | `docker compose -f docker-compose.intranet.yml exec -T postgres pg_dump -U postgres metahub > metahub.sql` |
+| 备份数据库 | `docker compose -f docker-compose.intranet.yml exec -T postgres pg_dump -U postgres datadict > datadict.sql` |
 
 ## 已知限制
 

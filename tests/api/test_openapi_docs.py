@@ -4,7 +4,7 @@ from app.api.v1.router import api_router
 
 
 def _schema() -> dict[str, object]:
-    app = FastAPI(title="MetaHub test")
+    app = FastAPI(title="DataDict test")
     app.include_router(api_router, prefix="/api/v1")
     return app.openapi()
 

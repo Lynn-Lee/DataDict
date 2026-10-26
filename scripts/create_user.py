@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""创建或重置 MetaHub 本地登录账号（DEV-TASKS T8.4）。
+"""创建或重置 DataDict 本地登录账号（DEV-TASKS T8.4）。
 
 V0.1 简单登录用；SSO/LDAP 接入后本脚本可弃用。密码经 pbkdf2 哈希后落库，
 明文不写入数据库。用法：
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.security import hash_password
 from app.models.support import SysUser
 
-DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/metahub"
+DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/datadict"
 
 
 async def upsert_user(
@@ -59,7 +59,7 @@ async def upsert_user(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="创建或重置 MetaHub 本地登录账号")
+    parser = argparse.ArgumentParser(description="创建或重置 DataDict 本地登录账号")
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
     parser.add_argument("--real-name", default=None)

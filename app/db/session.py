@@ -1,8 +1,8 @@
 """数据库会话：Web 与采集使用两套独立连接池，对应两个数据库角色。
 
 PRD §M10-8 / DEV-TASKS T8.1：
-    metahub_web       —— 全表读写
-    metahub_collector —— 采集层可写，知识层 **只授 SELECT**
+    datadict_web       —— 全表读写
+    datadict_collector —— 采集层可写，知识层 **只授 SELECT**
 
 隔离由数据库权限强制。本模块的职责是保证采集流程拿不到 web 连接：
 采集路径一律用 `collector_session()`，代码评审中出现采集代码里用 `web_session()`

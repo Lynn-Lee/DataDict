@@ -5,12 +5,12 @@
 set -eu
 
 psql -v ON_ERROR_STOP=1 \
-    -v web_pw="$METAHUB_WEB_PASSWORD" \
-    -v collector_pw="$METAHUB_COLLECTOR_PASSWORD" \
+    -v web_pw="$DATADICT_WEB_PASSWORD" \
+    -v collector_pw="$DATADICT_COLLECTOR_PASSWORD" \
     -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE ROLE metahub_web LOGIN PASSWORD :'web_pw';
-CREATE ROLE metahub_collector LOGIN PASSWORD :'collector_pw';
+CREATE ROLE datadict_web LOGIN PASSWORD :'web_pw';
+CREATE ROLE datadict_collector LOGIN PASSWORD :'collector_pw';
 SQL

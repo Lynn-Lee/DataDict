@@ -36,10 +36,10 @@ class TimestampMixin:
 # 否则 T8.3 的授权测试会因表未登记而失败，从而拦住"新表漏授权"。
 
 COLLECTION_TABLES: set[str] = set()
-"""采集层：metahub_collector 可写。"""
+"""采集层：datadict_collector 可写。"""
 
 KNOWLEDGE_TABLES: set[str] = set()
-"""知识层：metahub_collector 只读。"""
+"""知识层：datadict_collector 只读。"""
 
 SUPPORT_TABLES: set[str] = set()
 """支撑层：按表决定，见 deploy/grants.sql。"""

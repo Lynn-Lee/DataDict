@@ -4,8 +4,8 @@ from collections.abc import Iterator
 import pytest
 
 _DEFAULT_ENV = {
-    "DB_URL_WEB": "postgresql+asyncpg://metahub_web:test@localhost:15432/metahub",
-    "DB_URL_COLLECTOR": "postgresql+asyncpg://metahub_collector:test@localhost:15432/metahub",
+    "DB_URL_WEB": "postgresql+asyncpg://datadict_web:test@localhost:15432/datadict",
+    "DB_URL_COLLECTOR": "postgresql+asyncpg://datadict_collector:test@localhost:15432/datadict",
     "REDIS_URL": "redis://localhost:16379/0",
     "CREDENTIAL_SECRET_KEY": "test_only_secret_key_at_least_32_chars_x",
     "JWT_SECRET_KEY": "test_only_jwt_secret_key_at_least_32_chars",

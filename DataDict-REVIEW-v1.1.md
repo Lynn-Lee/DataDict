@@ -1,6 +1,6 @@
 # v1.1 评审
 
-评审对象：`MetaHub-PRD.md`（评审时为 v1.1）
+评审对象：`DataDict-PRD.md`（评审时为 v1.1）
 结论：v1.0 的 14 项问题都已正确修订，方案可以进入开发。下列 **5 项 P0 会在运行期暴露**，
 其中 3 项是数据库层的隐蔽问题，建议开发前改掉。
 
@@ -30,7 +30,7 @@ SET pg_trgm.similarity_threshold = 0.1;   -- 起始值，必须实测调优
 
 ```sql
 -- 迁移脚本中执行，对所有新建连接生效
-ALTER DATABASE metahub SET pg_trgm.similarity_threshold = 0.1;
+ALTER DATABASE datadict SET pg_trgm.similarity_threshold = 0.1;
 ```
 
 需要按查询动态调阈值时，用 `SET LOCAL` 并**确保在显式事务内**（`SET LOCAL` 在事务结束时
@@ -117,8 +117,8 @@ CREATE UNIQUE INDEX uq_todo_open ON annotation_todo(urn, todo_type)
 **位置**：§M10-8，line 928-950
 
 ```sql
-GRANT SELECT, INSERT, UPDATE ON table_meta, column_meta, ... TO metahub_collector;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO metahub_web;
+GRANT SELECT, INSERT, UPDATE ON table_meta, column_meta, ... TO datadict_collector;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO datadict_web;
 ```
 
 **问题**：`ON ALL TABLES IN SCHEMA` 只对**执行时已存在**的表生效，不是规则。
@@ -133,9 +133,9 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO metahub_web;
 ```sql
 -- web 角色：默认权限规则，后续新建表自动继承
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT ALL ON TABLES TO metahub_web;
+    GRANT ALL ON TABLES TO datadict_web;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT USAGE, SELECT ON SEQUENCES TO metahub_web;
+    GRANT USAGE, SELECT ON SEQUENCES TO datadict_web;
 ```
 
 collector 角色的权限是**按表分层的**（采集层可写 / 知识层只读），无法用默认权限表达，
@@ -178,8 +178,8 @@ async def test_collector_can_write_collection_tables(collector_session):
 
 | 方案 | 授权 | 采集用的视图 |
 |---|---|---|
-| A（推荐） | `GRANT SELECT ANY DICTIONARY TO metahub_collector;` | `DBA_TAB_COLUMNS` / `DBA_COL_COMMENTS` / `DBA_TABLES` |
-| B（DBA 更保守时） | `GRANT SELECT_CATALOG_ROLE TO metahub_collector;` | 同上 |
+| A（推荐） | `GRANT SELECT ANY DICTIONARY TO datadict_collector;` | `DBA_TAB_COLUMNS` / `DBA_COL_COMMENTS` / `DBA_TABLES` |
+| B（DBA 更保守时） | `GRANT SELECT_CATALOG_ROLE TO datadict_collector;` | 同上 |
 
 若 DBA 坚持不给字典级权限，则退化为**逐 schema 授权**
 （`GRANT SELECT ON <schema>.<table> ...`），但这与"严禁授予业务表 SELECT"的红线冲突，

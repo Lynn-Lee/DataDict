@@ -650,12 +650,12 @@ def _chunked(rows: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, A
 
 
 def _advisory_lock_key(source_id: int) -> int:
-    digest = hashlib.blake2b(f"metahub-sync:{source_id}".encode(), digest_size=8).digest()
+    digest = hashlib.blake2b(f"datadict-sync:{source_id}".encode(), digest_size=8).digest()
     return int.from_bytes(digest, byteorder="big", signed=True)
 
 
 def _redis_key(source_id: int) -> str:
-    return f"metahub:sync:source:{source_id}"
+    return f"datadict:sync:source:{source_id}"
 
 
 def _decode_redis_value(value: object) -> str | None:

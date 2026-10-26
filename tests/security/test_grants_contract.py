@@ -9,11 +9,11 @@ def test_grants_sql_declares_role_and_default_privileges() -> None:
 
     sql = GRANTS_SQL.read_text(encoding="utf-8").lower()
 
-    assert "create role metahub_web" in sql
-    assert "create role metahub_collector" in sql
+    assert "create role datadict_web" in sql
+    assert "create role datadict_collector" in sql
     assert "alter default privileges in schema public" in sql
-    assert "grant all on tables to metahub_web" in sql
-    assert "grant usage, select on sequences to metahub_web" in sql
+    assert "grant all on tables to datadict_web" in sql
+    assert "grant usage, select on sequences to datadict_web" in sql
 
 
 def test_grants_sql_separates_collector_write_and_read_layers() -> None:
@@ -34,11 +34,11 @@ def test_grants_sql_separates_collector_write_and_read_layers() -> None:
         assert table_name in sql
 
     assert "grant select, insert, update" in sql
-    assert "to metahub_collector" in sql
+    assert "to datadict_collector" in sql
     assert "grant select on" in sql
     assert "asset_annotation" in sql
     assert "revoke insert, update, delete, truncate" in sql
-    assert "from metahub_collector" in sql
+    assert "from datadict_collector" in sql
 
 
 def test_alembic_runs_grants_after_online_migrations() -> None:

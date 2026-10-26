@@ -1,7 +1,7 @@
 [project]
-name = "metahub"
+name = "datadict"
 version = "0.1.0"
-description = "MetaHub 数据库元数据知识库"
+description = "DataDict 数据库元数据知识库"
 requires-python = ">=3.11"
 
 dependencies = [

@@ -1,9 +1,9 @@
-# MetaHub 数据库元数据知识库 —— 产品需求文档（PRD）
+# DataDict 数据库元数据知识库 —— 产品需求文档（PRD）
 
 > **文档状态**：v1.2 · 已评审确认 · **本项目唯一的产品需求依据**
-> **服务代号**：`metahub`（数据库名、DB 角色、SDK 包名均以此为前缀）
+> **服务代号**：`datadict`（数据库名、DB 角色、SDK 包名均以此为前缀）
 > **技术栈**：Python + FastAPI + PostgreSQL + React
-> **配套文档**：[开发任务书](MetaHub-DEV-TASKS.md) · [选型验证方案](MetaHub-POC.md) · [评审记录 v1.0](MetaHub-REVIEW-v1.0.md) / [v1.1 评审](MetaHub-REVIEW-v1.1.md)
+> **配套文档**：[开发任务书](DataDict-DEV-TASKS.md) · [选型验证方案](DataDict-POC.md) · [评审记录 v1.0](DataDict-REVIEW-v1.0.md) / [v1.1 评审](DataDict-REVIEW-v1.1.md)
 >
 > 修订说明：v1.1 基于 v1.0 评审采纳 14 项变更（附录 A）；
 > v1.2 修复 v1.1 评审发现的 5 项 P0 + 5 项 P1（附录 B）。
@@ -208,8 +208,8 @@ Oracle 的 `ALL_TABLES` / `ALL_TAB_COLUMNS` / `ALL_COL_COMMENTS` 语义是
 
 | 方案 | 授权语句 | 采集使用的视图 |
 |---|---|---|
-| A（推荐） | `GRANT SELECT ANY DICTIONARY TO metahub_collector;` | `DBA_TABLES` / `DBA_TAB_COLUMNS` / `DBA_COL_COMMENTS` / `DBA_TAB_COMMENTS` / `DBA_INDEXES` |
-| B（DBA 更保守时） | `GRANT SELECT_CATALOG_ROLE TO metahub_collector;` | 同上 |
+| A（推荐） | `GRANT SELECT ANY DICTIONARY TO datadict_collector;` | `DBA_TABLES` / `DBA_TAB_COLUMNS` / `DBA_COL_COMMENTS` / `DBA_TAB_COMMENTS` / `DBA_INDEXES` |
+| B（DBA 更保守时） | `GRANT SELECT_CATALOG_ROLE TO datadict_collector;` | 同上 |
 
 若 DBA 坚决不给字典级权限，退化方案是逐 schema 授权业务表 SELECT——但这**违反本产品的
 只读元数据红线**，不可接受。此时应放弃 Oracle 自动采集，改为 **DDL 导出离线导入**。
@@ -751,7 +751,7 @@ pg_trgm 对中文按字符切三字组，2 字查询词（如"订单"）经空�
 SET pg_trgm.similarity_threshold = 0.1;
 
 -- ✅ 正确：数据库级持久配置，写进 Alembic 迁移
-ALTER DATABASE metahub SET pg_trgm.similarity_threshold = 0.1;
+ALTER DATABASE datadict SET pg_trgm.similarity_threshold = 0.1;
 ```
 
 **为什么这是个严重问题**：`SET` 作用于当前连接，并在该连接**归还连接池后继续保留**。
@@ -1018,7 +1018,7 @@ async def semantic_search(req: SemanticQuery):
 
 #### SDK
 
-提供 Python SDK（`pip install metahub-client`）降低内部接入成本。
+提供 Python SDK（`pip install datadict-client`）降低内部接入成本。
 
 ---
 
@@ -1043,35 +1043,35 @@ async def semantic_search(req: SemanticQuery):
 
 ```sql
 -- 采集服务专用角色：对采集层可写，对知识层只读
-CREATE ROLE metahub_collector LOGIN PASSWORD :'collector_pwd';
+CREATE ROLE datadict_collector LOGIN PASSWORD :'collector_pwd';
 
-GRANT CONNECT ON DATABASE metahub TO metahub_collector;
-GRANT USAGE   ON SCHEMA public   TO metahub_collector;
+GRANT CONNECT ON DATABASE datadict TO datadict_collector;
+GRANT USAGE   ON SCHEMA public   TO datadict_collector;
 
 -- 采集层：完整读写
 GRANT SELECT, INSERT, UPDATE ON
     table_meta, column_meta, index_meta,
     schema_change_log, sync_job_log, sync_fail_detail, annotation_todo
-TO metahub_collector;
+TO datadict_collector;
 
 -- 知识层：只读，无 INSERT / UPDATE / DELETE
 GRANT SELECT ON
     asset_annotation, asset_tag_rel, annotation_history,
     business_domain, tag, dict
-TO metahub_collector;
+TO datadict_collector;
 
 -- 序列权限
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO metahub_collector;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO datadict_collector;
 
 -- 显式收回，防止默认权限或后续 DDL 意外放开
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON
     asset_annotation, asset_tag_rel, annotation_history
-FROM metahub_collector;
+FROM datadict_collector;
 
 -- Web 服务角色：全表读写
-CREATE ROLE metahub_web LOGIN PASSWORD :'web_pwd';
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO metahub_web;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO metahub_web;
+CREATE ROLE datadict_web LOGIN PASSWORD :'web_pwd';
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO datadict_web;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO datadict_web;
 ```
 
 ##### 【v1.2 修正】`GRANT ON ALL TABLES` 是快照授权，不是规则
@@ -1087,9 +1087,9 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO metahub_web;
 
 ```sql
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT ALL ON TABLES TO metahub_web;
+    GRANT ALL ON TABLES TO datadict_web;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    GRANT USAGE, SELECT ON SEQUENCES TO metahub_web;
+    GRANT USAGE, SELECT ON SEQUENCES TO datadict_web;
 ```
 
 **修正二：collector 角色的权限是按表分层的**（采集层可写 / 知识层只读），
@@ -1121,8 +1121,8 @@ async def test_collector_can_write_collection_tables(collector_session, tbl):
 
 ```python
 class Settings(BaseSettings):
-    DB_URL_WEB: str        # metahub_web
-    DB_URL_COLLECTOR: str  # metahub_collector
+    DB_URL_WEB: str        # datadict_web
+    DB_URL_COLLECTOR: str  # datadict_collector
 
 # 采集任务强制使用 collector 连接池
 async def run_sync(source_id: int):
@@ -1202,7 +1202,7 @@ mysql:order_cluster:order_db:t_order:settle_status
 
 ### 5.2 建表 DDL（PostgreSQL）
 
-> **【修订 A7】** 下方 DDL 中，「采集层」与「支撑层」的表授予 `metahub_collector` 写权限；「知识层」的表对该角色仅 SELECT。
+> **【修订 A7】** 下方 DDL 中，「采集层」与「支撑层」的表授予 `datadict_collector` 写权限；「知识层」的表对该角色仅 SELECT。
 
 ```sql
 -- ═══════════ 采集层（机器写入，可被同步覆盖）═══════════
@@ -1616,14 +1616,14 @@ CREATE TABLE feedback (
 
 | Deployment | 副本 | DB 角色 | 说明 |
 |---|---|---|---|
-| `metahub-web` | 2+ | `metahub_web` | API + 前端静态资源 |
-| `metahub-collector` | 1 | `metahub_collector` | 采集调度，单副本 + PG advisory lock 双保险 |
-| `metahub-embedding` | 1~2 | `metahub_web`（只读为主） | 独立部署避免模型内存乘以 web 副本数 |
+| `datadict-web` | 2+ | `datadict_web` | API + 前端静态资源 |
+| `datadict-collector` | 1 | `datadict_collector` | 采集调度，单副本 + PG advisory lock 双保险 |
+| `datadict-embedding` | 1~2 | `datadict_web`（只读为主） | 独立部署避免模型内存乘以 web 副本数 |
 
 ### 6.2 项目结构
 
 ```
-metahub/
+datadict/
 ├── app/
 │   ├── main.py
 │   ├── core/
@@ -1726,7 +1726,7 @@ class BaseCollector(ABC):
 
 - Redis 分布式锁（同数据源互斥）+ PG advisory lock 兜底
 - Upsert 采用 `INSERT ... ON CONFLICT (urn) DO UPDATE`，天然幂等
-- **采集服务使用 `metahub_collector` 角色，对标注表无写权限——这是数据库强制的，非代码约定**
+- **采集服务使用 `datadict_collector` 角色，对标注表无写权限——这是数据库强制的，非代码约定**
 - 大库分批提交，每批 1000 条
 
 ---
@@ -1862,7 +1862,7 @@ class BaseCollector(ABC):
 | A4 | M1-1 | 支持清单含 MongoDB（schema-less，无对应设计） | 删除 MongoDB；数仓类（Hive/Doris/SR/CK）移至 V1.5，数据模型预留字段 |
 | A5 | M3-4 | `urn` UNIQUE，重命名迁移若目标已有标注则 UPDATE 违约 | 定义按 `source_type` 分流的合并策略；先删后插 + `flush()` |
 | A6 | §8 | 变更检测排 V0.5，V0.1 已跑同步 → 4~5 周变更流水永久丢失 | diff + 写 `schema_change_log` 前移 V0.1，UI 留 V0.5 |
-| A7 | §6.4 / M10-8 | 称"物理不可能触碰标注表"，实为代码纪律 | 独立 `metahub_collector` role，标注表只授 SELECT；CI 权限测试 |
+| A7 | §6.4 / M10-8 | 称"物理不可能触碰标注表"，实为代码纪律 | 独立 `datadict_collector` role，标注表只授 SELECT；CI 权限测试 |
 | A8 | M6-2③ | `status`/`type`/`name` 等通用名类型相同语义不同，一键批量注入错误 | 新增 `common_column_blacklist`，命中时移除批量按钮，强制逐表确认 |
 | A9 | M6 | "6000~8000 单元""降低 85%""日均 300 字段"均无依据 | 删除全部预估，改为 V0.1 实测 SQL，V0.5 标准待实测后填 |
 | A10 | §7 | 表数高估约 5 倍（字段数属合理余量） | 重定为 1 万表 / 50 万字段 |

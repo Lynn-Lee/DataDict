@@ -59,7 +59,7 @@ def mount_frontend(app: FastAPI, dist_dir: Path, api_prefix: str) -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="MetaHub 元数据知识库",
+        title="DataDict 元数据知识库",
         description="数据库元数据知识库 —— 表/字段元数据采集与业务语义标注平台",
         version="0.1.0",
         openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",

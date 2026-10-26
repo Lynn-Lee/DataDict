@@ -16,8 +16,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER DATABASE metahub SET pg_trgm.similarity_threshold = 0.1")
+    op.execute("ALTER DATABASE datadict SET pg_trgm.similarity_threshold = 0.1")
 
 
 def downgrade() -> None:
-    op.execute("ALTER DATABASE metahub RESET pg_trgm.similarity_threshold")
+    op.execute("ALTER DATABASE datadict RESET pg_trgm.similarity_threshold")

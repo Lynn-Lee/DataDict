@@ -4,7 +4,7 @@
 
 **Goal:** Implement DEV-TASKS T1.2 knowledge-layer metadata tables as SQLAlchemy models and an Alembic migration.
 
-**Architecture:** Keep human-maintained knowledge tables separate from machine-maintained collection tables. Register every knowledge table in `KNOWLEDGE_TABLES` so later grant tests can prove `metahub_collector` has read-only access to this layer.
+**Architecture:** Keep human-maintained knowledge tables separate from machine-maintained collection tables. Register every knowledge table in `KNOWLEDGE_TABLES` so later grant tests can prove `datadict_collector` has read-only access to this layer.
 
 **Tech Stack:** Python 3.11+, SQLAlchemy 2.0, Alembic, PostgreSQL JSONB and generated columns.
 
@@ -52,4 +52,4 @@
 
 - Spec coverage: this covers DEV-TASKS T1.2 only. It intentionally excludes `asset_embedding` because the task book places semantic search in V1.0, not T1.2.
 - Placeholder scan: no placeholder steps remain.
-- Type consistency: table names match MetaHub-DEV-TASKS T1.2 and MetaHub-PRD §5.2.
+- Type consistency: table names match DataDict-DEV-TASKS T1.2 and DataDict-PRD §5.2.

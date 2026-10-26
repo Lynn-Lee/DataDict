@@ -1,4 +1,4 @@
-name: metahub
+name: datadict
 
 services:
   postgres:
@@ -6,7 +6,7 @@ services:
     # 见 PRD §5.4 与 §M8——两个扩展都在数据库侧，不能用纯净 postgres 镜像。
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: metahub
+      POSTGRES_DB: datadict
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       TZ: Asia/Shanghai
@@ -17,7 +17,7 @@ services:
       # 首次启动时创建扩展与两个业务角色。生产授权以 deploy/grants.sql 为准。
       - ./deploy/init-local.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d metahub"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d datadict"]
       interval: 5s
       timeout: 3s
       retries: 20

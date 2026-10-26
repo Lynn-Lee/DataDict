@@ -7,7 +7,7 @@
 
     CREDENTIAL_SECRET_KEY=... python scripts/create_datasource.py \
         --code prod_mysql_core --name '核心交易库' --db-type mysql --env prod \
-        --host 10.0.0.1 --port 3306 --username metahub_ro --password 's3cret' \
+        --host 10.0.0.1 --port 3306 --username datadict_ro --password 's3cret' \
         --default-db trade --sync-cron '0 2 * * *'
 
 按 code 幂等 upsert：已存在则更新连接信息与凭证，可用于轮换密码。
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.credentials import encrypt_credential
 from app.models.metadata import DataSource
 
-DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/metahub"
+DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/datadict"
 
 
 def _parse_rules(raw: str | None) -> list[dict[str, Any]]:

@@ -1,4 +1,4 @@
-# MetaHub 单镜像：前端构建产物由后端同源托管（FRONTEND_DIST_DIR）。
+# DataDict 单镜像：前端构建产物由后端同源托管（FRONTEND_DIST_DIR）。
 
 # ── 阶段 1：构建前端 ────────────────────────────────────────
 FROM node:22-alpine AS frontend
@@ -11,7 +11,7 @@ RUN npm run build
 # ── 阶段 2：运行时 ──────────────────────────────────────────
 FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-WORKDIR /srv/metahub
+WORKDIR /srv/datadict
 
 COPY pyproject.toml ./
 COPY app ./app
@@ -26,11 +26,11 @@ COPY scripts ./scripts
 COPY --from=frontend /build/dist ./frontend-dist
 
 # 构建上下文里的目录权限取决于宿主机（可能是 700），统一放开读权限给非 root 用户
-RUN useradd --system --uid 10001 metahub \
-    && chmod -R a+rX /srv/metahub \
+RUN useradd --system --uid 10001 datadict \
+    && chmod -R a+rX /srv/datadict \
     && chmod +x deploy/entrypoint.sh
-USER metahub
+USER datadict
 
-ENV FRONTEND_DIST_DIR=/srv/metahub/frontend-dist
+ENV FRONTEND_DIST_DIR=/srv/datadict/frontend-dist
 EXPOSE 8000
 ENTRYPOINT ["./deploy/entrypoint.sh"]

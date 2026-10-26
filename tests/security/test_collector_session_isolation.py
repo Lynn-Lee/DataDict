@@ -1,7 +1,7 @@
 """采集路径连接池隔离契约门禁（DEV-TASKS T8.1 / §7 红线第 6 条）。
 
-T8.1 用两套连接池对应两个数据库角色：`metahub_web`（全表读写）与
-`metahub_collector`（采集层可写、知识层只读）。隔离由数据库权限强制，
+T8.1 用两套连接池对应两个数据库角色：`datadict_web`（全表读写）与
+`datadict_collector`（采集层可写、知识层只读）。隔离由数据库权限强制，
 但前提是**采集流程只能拿 collector 会话**——一旦有人在采集服务里误用
 `web_session` / `get_web_session`，物理角色隔离就被绕过。
 

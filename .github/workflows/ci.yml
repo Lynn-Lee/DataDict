@@ -14,7 +14,7 @@ jobs:
         # 与本地/生产一致：需要 pgvector，pg_trgm 随 PostgreSQL 自带
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_DB: metahub
+          POSTGRES_DB: datadict
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
@@ -32,8 +32,8 @@ jobs:
           --health-interval 5s --health-timeout 3s --health-retries 20
 
     env:
-      DB_URL_WEB: postgresql+asyncpg://metahub_web:ci@localhost:5432/metahub
-      DB_URL_COLLECTOR: postgresql+asyncpg://metahub_collector:ci@localhost:5432/metahub
+      DB_URL_WEB: postgresql+asyncpg://datadict_web:ci@localhost:5432/datadict
+      DB_URL_COLLECTOR: postgresql+asyncpg://datadict_collector:ci@localhost:5432/datadict
       REDIS_URL: redis://localhost:6379/0
       CREDENTIAL_SECRET_KEY: ci_only_secret_key_at_least_32_chars_long
       JWT_SECRET_KEY: ci_only_jwt_secret_key_at_least_32_chars
@@ -52,18 +52,18 @@ jobs:
       - name: 初始化数据库角色与扩展
         run: |
           export PGPASSWORD=postgres
-          psql -h localhost -U postgres -d metahub -v ON_ERROR_STOP=1 <<'SQL'
+          psql -h localhost -U postgres -d datadict -v ON_ERROR_STOP=1 <<'SQL'
             CREATE EXTENSION IF NOT EXISTS pg_trgm;
             CREATE EXTENSION IF NOT EXISTS vector;
-            ALTER DATABASE metahub SET pg_trgm.similarity_threshold = 0.1;
-            CREATE ROLE metahub_web LOGIN PASSWORD 'ci';
-            CREATE ROLE metahub_collector LOGIN PASSWORD 'ci';
-            GRANT CONNECT ON DATABASE metahub TO metahub_web, metahub_collector;
-            GRANT USAGE ON SCHEMA public TO metahub_web, metahub_collector;
+            ALTER DATABASE datadict SET pg_trgm.similarity_threshold = 0.1;
+            CREATE ROLE datadict_web LOGIN PASSWORD 'ci';
+            CREATE ROLE datadict_collector LOGIN PASSWORD 'ci';
+            GRANT CONNECT ON DATABASE datadict TO datadict_web, datadict_collector;
+            GRANT USAGE ON SCHEMA public TO datadict_web, datadict_collector;
             ALTER DEFAULT PRIVILEGES IN SCHEMA public
-              GRANT ALL ON TABLES TO metahub_web;
+              GRANT ALL ON TABLES TO datadict_web;
             ALTER DEFAULT PRIVILEGES IN SCHEMA public
-              GRANT USAGE, SELECT ON SEQUENCES TO metahub_web;
+              GRANT USAGE, SELECT ON SEQUENCES TO datadict_web;
           SQL
 
       - name: Lint

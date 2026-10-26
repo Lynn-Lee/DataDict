@@ -15,10 +15,10 @@ class RecordingScheduler:
 
 
 async def test_lifespan_starts_and_stops_sync_scheduler(monkeypatch: Any) -> None:
-    monkeypatch.setenv("DB_URL_WEB", "postgresql+asyncpg://metahub_web:test@localhost/metahub")
+    monkeypatch.setenv("DB_URL_WEB", "postgresql+asyncpg://datadict_web:test@localhost/datadict")
     monkeypatch.setenv(
         "DB_URL_COLLECTOR",
-        "postgresql+asyncpg://metahub_collector:test@localhost/metahub",
+        "postgresql+asyncpg://datadict_collector:test@localhost/datadict",
     )
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("CREDENTIAL_SECRET_KEY", "test_only_secret_key_at_least_32_chars_x")

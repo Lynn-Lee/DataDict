@@ -37,7 +37,7 @@ def _config() -> DataSourceConfig:
         port=5432,
         username="readonly",
         password="secret",
-        default_db="metahub_source",
+        default_db="datadict_source",
     )
 
 

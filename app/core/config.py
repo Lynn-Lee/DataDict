@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     )
 
     # ── 应用 ──────────────────────────────────────────────
-    APP_NAME: str = "metahub"
+    APP_NAME: str = "datadict"
     ENV: Env = "local"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"DB_URL_WEB 与 DB_URL_COLLECTOR 使用了相同的数据库角色 "
                 f"({web_user!r})，标注表的物理隔离将失效。"
-                f"请按 deploy/grants.sql 创建 metahub_web 与 metahub_collector 两个角色。"
+                f"请按 deploy/grants.sql 创建 datadict_web 与 datadict_collector 两个角色。"
             )
         return self
 

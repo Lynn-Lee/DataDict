@@ -13,7 +13,7 @@ from app.services.auth import AuthService, AuthSession
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # auto_error=False：缺少 Authorization 头时返回 None，由下方统一抛我们的
-# UnauthenticatedError（METAHUB-5000），避免 FastAPI 默认 403/直接 401 绕过错误码体系。
+# UnauthenticatedError（DATADICT-5000），避免 FastAPI 默认 403/直接 401 绕过错误码体系。
 _bearer = HTTPBearer(auto_error=False)
 
 

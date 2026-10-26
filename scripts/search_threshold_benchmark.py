@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run MetaHub pg_trgm threshold benchmark for DEV-TASKS T4.2."""
+"""Run DataDict pg_trgm threshold benchmark for DEV-TASKS T4.2."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from app.services.search_tuning import (
     recommend_threshold,
 )
 
-DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/metahub"
+DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/datadict"
 DEFAULT_THRESHOLDS = (0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.30)
 
 
