@@ -14,10 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_web_session
 from app.schemas.metadata_queries import MetadataPage
 from app.schemas.standard_fields import (
+    AttachTagPayload,
     ConfirmStandardFieldPayload,
     GenerateCandidatesOut,
     StandardFieldDetailOut,
+    StandardFieldLibraryOut,
     StandardFieldOut,
+    StandardFieldTagOut,
 )
 from app.services import standard_field as service
 
@@ -98,6 +101,70 @@ async def confirm_standard_field(
     out = await service.confirm_standard_field(session, standard_id, payload)
     await session.commit()
     return out
+
+
+@router.get(
+    "/library",
+    response_model=MetadataPage[StandardFieldLibraryOut],
+    summary="终版标准定义库",
+    description=(
+        "已定版（CONFIRMED）的标准字段定义列表，含业务标签"
+        "（同一标准释义在不同业务域的叫法）。供设计态查询与 AI/MCP 消费。"
+    ),
+)
+async def list_standard_field_library(
+    session: Annotated[AsyncSession, Depends(get_web_session)],
+    q: Annotated[str | None, Query(max_length=128, description="字段名/释义关键词")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> MetadataPage[StandardFieldLibraryOut]:
+    total, items = await service.list_confirmed_standards(
+        session, q=q, page=page, page_size=page_size
+    )
+    return MetadataPage(total=total, page=page, page_size=page_size, items=items)
+
+
+@router.get(
+    "/tag-options",
+    response_model=list[str],
+    summary="业务标签候选",
+    description="已有业务别名标签名列表，供前端自动补全。",
+)
+async def list_standard_field_tag_options(
+    session: Annotated[AsyncSession, Depends(get_web_session)],
+) -> list[str]:
+    return await service.list_tag_options(session)
+
+
+@router.post(
+    "/{standard_id}/tags",
+    response_model=list[StandardFieldTagOut],
+    summary="添加业务标签",
+    description="给标准定义打业务标签（不同业务域的叫法）；标签不存在时自动创建。",
+)
+async def attach_standard_field_tag(
+    standard_id: int,
+    payload: AttachTagPayload,
+    session: Annotated[AsyncSession, Depends(get_web_session)],
+) -> list[StandardFieldTagOut]:
+    tags = await service.attach_tag(session, standard_id, payload.name)
+    await session.commit()
+    return tags
+
+
+@router.delete(
+    "/{standard_id}/tags/{tag_id}",
+    response_model=list[StandardFieldTagOut],
+    summary="移除业务标签",
+)
+async def detach_standard_field_tag(
+    standard_id: int,
+    tag_id: int,
+    session: Annotated[AsyncSession, Depends(get_web_session)],
+) -> list[StandardFieldTagOut]:
+    tags = await service.detach_tag(session, standard_id, tag_id)
+    await session.commit()
+    return tags
 
 
 @router.get(

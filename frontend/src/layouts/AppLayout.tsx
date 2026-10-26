@@ -1,4 +1,10 @@
-import { ApartmentOutlined, DatabaseOutlined, LogoutOutlined, SearchOutlined } from "@ant-design/icons";
+import {
+  ApartmentOutlined,
+  BookOutlined,
+  DatabaseOutlined,
+  LogoutOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
 import { Button, Layout, Menu, Space, Typography } from "antd";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -13,6 +19,11 @@ const MENU_ITEMS = [
     key: "/standard-fields",
     icon: <ApartmentOutlined />,
     label: <Link to="/standard-fields">标准定义</Link>,
+  },
+  {
+    key: "/standard-library",
+    icon: <BookOutlined />,
+    label: <Link to="/standard-library">标准定义库</Link>,
   },
 ];
 

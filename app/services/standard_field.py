@@ -13,15 +13,31 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
-from app.models.knowledge import CommonColumnBlacklist, StandardField, StandardFieldItem
+from app.core.exceptions import ConflictError, DataDictError, NotFoundError
+from app.models.knowledge import (
+    AssetTagRel,
+    CommonColumnBlacklist,
+    StandardField,
+    StandardFieldItem,
+    Tag,
+)
 from app.models.metadata import ColumnMeta, TableMeta
 from app.schemas.standard_fields import (
     ConfirmStandardFieldPayload,
     StandardFieldDetailOut,
     StandardFieldItemOut,
+    StandardFieldLibraryOut,
     StandardFieldOut,
+    StandardFieldTagOut,
 )
+
+# 业务标签：同一标准释义在不同业务域的叫法（别名）。复用 PRD M5 标签体系，
+# 标准定义不是 URN 资产，用 standard:{id} 约定接入 asset_tag_rel。
+STANDARD_TAG_CATEGORY = "业务别名"
+
+
+def _standard_tag_urn(standard_id: int) -> str:
+    return f"standard:{standard_id}"
 
 
 @dataclass
@@ -320,3 +336,118 @@ async def confirm_standard_field(
 
     await session.flush()
     return _to_out(sf)
+
+
+async def _load_tags(
+    session: AsyncSession, standard_ids: list[int]
+) -> dict[int, list[StandardFieldTagOut]]:
+    if not standard_ids:
+        return {}
+    urns = [_standard_tag_urn(sid) for sid in standard_ids]
+    rows = await session.execute(
+        select(AssetTagRel.urn, Tag.id, Tag.name)
+        .join(Tag, Tag.id == AssetTagRel.tag_id)
+        .where(AssetTagRel.urn.in_(urns))
+        .order_by(Tag.name)
+    )
+    tags_by_id: dict[int, list[StandardFieldTagOut]] = {}
+    for urn, tag_id, name in rows:
+        sid = int(urn.split(":", 1)[1])
+        tags_by_id.setdefault(sid, []).append(StandardFieldTagOut(id=tag_id, name=name))
+    return tags_by_id
+
+
+async def list_confirmed_standards(
+    session: AsyncSession,
+    *,
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[int, list[StandardFieldLibraryOut]]:
+    """终版标准定义库列表（含业务标签）。"""
+    stmt = select(StandardField).where(StandardField.status == "CONFIRMED")
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                StandardField.standard_name.ilike(like),
+                StandardField.business_meaning.ilike(like),
+            )
+        )
+    total = int(
+        (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    )
+    rows = await session.execute(
+        stmt.order_by(StandardField.candidate_count.desc(), StandardField.id)
+        .limit(page_size)
+        .offset((page - 1) * page_size)
+    )
+    standards = list(rows.scalars())
+    tags_by_id = await _load_tags(session, [sf.id for sf in standards])
+    items = [
+        StandardFieldLibraryOut(**_to_out(sf).model_dump(), tags=tags_by_id.get(sf.id, []))
+        for sf in standards
+    ]
+    return total, items
+
+
+async def list_tag_options(session: AsyncSession) -> list[str]:
+    rows = await session.execute(
+        select(Tag.name)
+        .where(Tag.category == STANDARD_TAG_CATEGORY, Tag.enabled.is_(True))
+        .distinct()
+        .order_by(Tag.name)
+    )
+    return [name for (name,) in rows]
+
+
+async def attach_tag(
+    session: AsyncSession,
+    standard_id: int,
+    name: str,
+    *,
+    operator_id: int | None = None,
+) -> list[StandardFieldTagOut]:
+    """给标准定义打业务标签；标签不存在时自动创建（类别=业务别名）。"""
+    sf = await session.get(StandardField, standard_id)
+    if sf is None:
+        raise NotFoundError("标准字段定义不存在", detail={"id": standard_id})
+    tag_name = name.strip()
+    if not tag_name:
+        raise DataDictError("标签名不能为空")
+
+    tag = (
+        await session.execute(
+            select(Tag).where(Tag.category == STANDARD_TAG_CATEGORY, Tag.name == tag_name)
+        )
+    ).scalar_one_or_none()
+    if tag is None:
+        tag = Tag(category=STANDARD_TAG_CATEGORY, code=tag_name, name=tag_name)
+        session.add(tag)
+        await session.flush()
+
+    urn = _standard_tag_urn(standard_id)
+    exists = (
+        await session.execute(
+            select(AssetTagRel.id).where(AssetTagRel.urn == urn, AssetTagRel.tag_id == tag.id)
+        )
+    ).scalar_one_or_none()
+    if exists is None:
+        session.add(AssetTagRel(urn=urn, tag_id=tag.id, created_by=operator_id))
+    await session.flush()
+    return (await _load_tags(session, [standard_id])).get(standard_id, [])
+
+
+async def detach_tag(
+    session: AsyncSession, standard_id: int, tag_id: int
+) -> list[StandardFieldTagOut]:
+    sf = await session.get(StandardField, standard_id)
+    if sf is None:
+        raise NotFoundError("标准字段定义不存在", detail={"id": standard_id})
+    await session.execute(
+        delete(AssetTagRel).where(
+            AssetTagRel.urn == _standard_tag_urn(standard_id), AssetTagRel.tag_id == tag_id
+        )
+    )
+    await session.flush()
+    return (await _load_tags(session, [standard_id])).get(standard_id, [])

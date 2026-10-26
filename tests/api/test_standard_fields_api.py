@@ -45,3 +45,9 @@ def test_confirm_rejects_missing_raw_type_before_db_access() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_attach_tag_rejects_empty_name_before_db_access() -> None:
+    response = _client().post("/standard-fields/1/tags", json={"name": ""})
+
+    assert response.status_code == 422

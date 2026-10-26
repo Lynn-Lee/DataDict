@@ -4,7 +4,6 @@ import {
   Alert,
   Button,
   Card,
-  Drawer,
   Input,
   Modal,
   Radio,
@@ -21,12 +20,11 @@ import { useEffect, useMemo, useState } from "react";
 import {
   confirmStandardField,
   generateStandardFields,
-  getStandardField,
   listStandardFields,
   type StandardField,
-  type StandardFieldItem,
 } from "@/api/standardFields";
 import { EmptyState, ErrorState } from "@/components/QueryStates";
+import StandardFieldDrawer from "@/components/StandardFieldDrawer";
 
 const PAGE_SIZE = 20;
 const DEBOUNCE_MS = 300;
@@ -148,13 +146,8 @@ export default function StandardFieldsPage() {
     });
   };
 
-  // ── 详情抽屉（存量源字段清单 + conforms） ──
+  // ── 详情抽屉（共享组件） ──
   const [detailId, setDetailId] = useState<number | null>(null);
-  const detailQuery = useQuery({
-    queryKey: ["standard-field-detail", detailId],
-    queryFn: () => getStandardField(detailId as number),
-    enabled: detailId !== null,
-  });
 
   const columns = useMemo<ColumnsType<StandardField>>(
     () => [
@@ -251,36 +244,6 @@ export default function StandardFieldsPage() {
     // eslint 不需要依赖：openConfirm/setDetailId 为稳定引用
     [],
   );
-
-  const itemColumns: ColumnsType<StandardFieldItem> = [
-    { title: "库", dataIndex: "db_name", width: 110 },
-    { title: "表", dataIndex: "table_name", width: 200, ellipsis: true },
-    {
-      title: "字段",
-      dataIndex: "column_name",
-      width: 160,
-      render: (value: string | null) => <Typography.Text code>{value}</Typography.Text>,
-    },
-    {
-      title: "原始类型",
-      dataIndex: "raw_type",
-      width: 130,
-      render: (value: string | null) => <Typography.Text code>{value}</Typography.Text>,
-    },
-    {
-      title: "符合标准",
-      dataIndex: "conforms",
-      width: 100,
-      render: (value: boolean | null) =>
-        value === null ? (
-          <Tag>待回算</Tag>
-        ) : value ? (
-          <Tag color="green">符合</Tag>
-        ) : (
-          <Tag color="orange">不符合</Tag>
-        ),
-    },
-  ];
 
   return (
     <Card>
@@ -402,44 +365,7 @@ export default function StandardFieldsPage() {
         )}
       </Modal>
 
-      <Drawer
-        title={detailQuery.data ? `标准定义 · ${detailQuery.data.standard_name}` : "标准定义详情"}
-        width={720}
-        open={detailId !== null}
-        onClose={() => setDetailId(null)}
-        destroyOnClose
-      >
-        {detailQuery.isLoading ? (
-          <Typography.Text type="secondary">加载中…</Typography.Text>
-        ) : detailQuery.isError ? (
-          <ErrorState error={detailQuery.error} onRetry={() => void detailQuery.refetch()} />
-        ) : detailQuery.data ? (
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-            <Space wrap>
-              <Tag color={detailQuery.data.status === "CONFIRMED" ? "green" : "blue"}>
-                {detailQuery.data.status === "CONFIRMED" ? "已定版" : "待确认"}
-              </Tag>
-              {detailQuery.data.raw_type && (
-                <Tag style={{ fontFamily: "monospace" }}>{detailQuery.data.raw_type}</Tag>
-              )}
-              <Tag>{detailQuery.data.logical_type}</Tag>
-              <Typography.Text>{detailQuery.data.business_meaning ?? "—"}</Typography.Text>
-            </Space>
-            <Typography.Text type="secondary">
-              存量源字段 {detailQuery.data.items.length} 个
-              {detailQuery.data.status === "CONFIRMED" &&
-                `，符合 ${detailQuery.data.items.filter((i) => i.conforms === true).length} 个`}
-            </Typography.Text>
-            <Table<StandardFieldItem>
-              rowKey="column_urn"
-              size="small"
-              columns={itemColumns}
-              dataSource={detailQuery.data.items}
-              pagination={{ pageSize: 10, showSizeChanger: false }}
-            />
-          </Space>
-        ) : null}
-      </Drawer>
+      <StandardFieldDrawer standardId={detailId} onClose={() => setDetailId(null)} />
     </Card>
   );
 }

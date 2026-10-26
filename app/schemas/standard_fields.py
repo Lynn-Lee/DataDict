@@ -33,6 +33,21 @@ class StandardFieldDetailOut(StandardFieldOut):
     items: list[StandardFieldItemOut] = Field(default_factory=list)
 
 
+class StandardFieldTagOut(BaseModel):
+    id: int
+    name: str
+
+
+class StandardFieldLibraryOut(StandardFieldOut):
+    """终版标准定义展示行：定义 + 业务标签（同一含义在不同业务域的叫法）。"""
+
+    tags: list[StandardFieldTagOut] = Field(default_factory=list)
+
+
+class AttachTagPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=64, examples=["发货网点"])
+
+
 class GenerateCandidatesOut(BaseModel):
     generated: int
     updated: int

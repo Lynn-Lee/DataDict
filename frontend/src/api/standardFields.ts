@@ -81,3 +81,41 @@ export function confirmStandardField(id: number, payload: ConfirmPayload): Promi
 export function generateStandardFields(): Promise<GenerateSummary> {
   return apiRequest<GenerateSummary>("/standard-fields/generate", { method: "POST" });
 }
+
+// ── 终版标准定义库（含业务标签） ──
+
+export interface StandardFieldTag {
+  id: number;
+  name: string;
+}
+
+export interface StandardFieldLibraryItem extends StandardField {
+  tags: StandardFieldTag[];
+}
+
+export function listStandardLibrary(params: {
+  q?: string;
+  page: number;
+  pageSize: number;
+}): Promise<MetadataPage<StandardFieldLibraryItem>> {
+  return apiRequest<MetadataPage<StandardFieldLibraryItem>>("/standard-fields/library", {
+    params: { q: params.q, page: params.page, page_size: params.pageSize },
+  });
+}
+
+export function listTagOptions(): Promise<string[]> {
+  return apiRequest<string[]>("/standard-fields/tag-options");
+}
+
+export function attachTag(id: number, name: string): Promise<StandardFieldTag[]> {
+  return apiRequest<StandardFieldTag[]>(`/standard-fields/${id}/tags`, {
+    method: "POST",
+    body: { name },
+  });
+}
+
+export function detachTag(id: number, tagId: number): Promise<StandardFieldTag[]> {
+  return apiRequest<StandardFieldTag[]>(`/standard-fields/${id}/tags/${tagId}`, {
+    method: "DELETE",
+  });
+}

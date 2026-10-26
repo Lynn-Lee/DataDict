@@ -6,6 +6,7 @@ import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import SearchPage from "@/pages/SearchPage";
 import StandardFieldsPage from "@/pages/StandardFieldsPage";
+import StandardLibraryPage from "@/pages/StandardLibraryPage";
 import TableDetailPage from "@/pages/TableDetailPage";
 import TablesPage from "@/pages/TablesPage";
 
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "tables", element: <TablesPage /> },
       { path: "tables/:urn", element: <TableDetailPage /> },
       { path: "standard-fields", element: <StandardFieldsPage /> },
+      { path: "standard-library", element: <StandardLibraryPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

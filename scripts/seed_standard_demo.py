@@ -20,11 +20,22 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import app.models  # noqa: F401 - 注册 ORM 元数据
 from app.models.knowledge import CommonColumnBlacklist, StandardField, StandardFieldItem
 from app.models.metadata import ColumnMeta, DataSource, TableMeta
-from app.services.standard_field import generate_standard_field_candidates
+from app.schemas.standard_fields import ConfirmStandardFieldPayload
+from app.services.standard_field import (
+    attach_tag,
+    confirm_standard_field,
+    generate_standard_field_candidates,
+)
 
 DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/datadict"
 DEMO_SOURCE_CODE = "demo_operdb"
 DEMO_DB = "operdb"
+
+# (字段名, 定版类型, 逻辑类型, 标准释义, 业务标签[各业务域叫法])
+PRE_CONFIRMED: list[tuple[str, str, str, str, list[str]]] = [
+    ("waybill_no", "varchar(32)", "STRING", "运单编号，全局唯一", ["运单号", "提单号"]),
+    ("send_site_code", "varchar(16)", "STRING", "寄件网点编号", ["寄件网点", "发货网点"]),
+]
 
 # 表名 -> [(字段名, 原始类型, 逻辑类型, 注释)]，字段命名与真实运营库一致
 TABLES: dict[str, list[tuple[str, str, str, str | None]]] = {
@@ -183,6 +194,27 @@ async def seed(db_url: str) -> None:
                     ordinal_base += 1
 
         summary = await generate_standard_field_candidates(session)
+
+        # 演示状态：定版两个标准并打业务标签（不同业务域的叫法）
+        for name, raw_type, logical_type, meaning, tags in PRE_CONFIRMED:
+            sf = (
+                await session.execute(
+                    select(StandardField).where(StandardField.standard_name == name)
+                )
+            ).scalar_one_or_none()
+            if sf is not None and sf.status == "DRAFT":
+                await confirm_standard_field(
+                    session,
+                    sf.id,
+                    ConfirmStandardFieldPayload(
+                        raw_type=raw_type,
+                        logical_type=logical_type,
+                        business_meaning=meaning,
+                    ),
+                )
+                for tag in tags:
+                    await attach_tag(session, sf.id, tag)
+
         await session.commit()
 
     print(f"seeded columns: {ordinal_base}")
