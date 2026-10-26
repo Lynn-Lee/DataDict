@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 from pathlib import Path
 
@@ -14,6 +15,12 @@ config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# 部署环境用高权限账号（建扩展、ALTER DATABASE）跑迁移，连接串由环境变量注入，
+# 不写进 alembic.ini。configparser 把 % 当插值符，密码里的 % 需转义。
+_migration_url = os.environ.get("ALEMBIC_DB_URL")
+if _migration_url:
+    config.set_main_option("sqlalchemy.url", _migration_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 GRANTS_SQL_RELATIVE = Path("deploy/grants.sql")

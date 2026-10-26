@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ENV: Env = "local"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
+    # 前端构建产物目录。设置后由本服务同源托管静态资源（内网部署用）；留空则只提供 API。
+    FRONTEND_DIST_DIR: str | None = None
 
     # ── 数据库 ────────────────────────────────────────────
     # PRD §M10-8 / DEV-TASKS T8.1：采集与 Web 必须使用不同的数据库角色。
