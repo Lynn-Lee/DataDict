@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, cast
 
 from sqlalchemy import Select, func, or_, select
@@ -48,6 +49,11 @@ class SQLAlchemyMetadataQueryService:
                 DataSource.default_db,
                 DataSource.group_name,
                 DataSource.enabled,
+                DataSource.username,
+                DataSource.sync_cron,
+                DataSource.last_sync_at,
+                DataSource.include_rules,
+                DataSource.exclude_rules,
             )
             .order_by(DataSource.id.asc())
             .limit(page_size)
@@ -215,17 +221,20 @@ class SQLAlchemyMetadataQueryService:
 
 
 def _table_select() -> Select[Any]:
-    return select(
-        TableMeta.urn,
-        TableMeta.source_id,
-        TableMeta.db_name,
-        TableMeta.table_name,
-        TableMeta.table_type,
-        TableMeta.table_comment,
-        TableMeta.row_count,
-        TableMeta.data_size,
-        TableMeta.dw_layer,
-        TableMeta.is_deleted,
+    return cast(
+        "Select[Any]",
+        select(
+            TableMeta.urn,
+            TableMeta.source_id,
+            TableMeta.db_name,
+            TableMeta.table_name,
+            TableMeta.table_type,
+            TableMeta.table_comment,
+            TableMeta.row_count,
+            TableMeta.data_size,
+            TableMeta.dw_layer,
+            TableMeta.is_deleted,
+        ),
     )
 
 
@@ -289,6 +298,11 @@ def _data_source_out(row: dict[str, Any]) -> DataSourceOut:
         default_db=cast(str | None, row["default_db"]),
         group_name=cast(str | None, row["group_name"]),
         enabled=bool(row["enabled"]),
+        username=str(row.get("username") or ""),
+        sync_cron=cast(str | None, row.get("sync_cron")),
+        last_sync_at=cast("datetime | None", row.get("last_sync_at")),
+        include_rules=cast(list[dict[str, Any]], row.get("include_rules") or []),
+        exclude_rules=cast(list[dict[str, Any]], row.get("exclude_rules") or []),
     )
 
 

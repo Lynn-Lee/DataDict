@@ -1,6 +1,7 @@
 """基础查询接口 schema（DEV-TASKS T6.2）。"""
 
-from typing import Generic, TypeVar
+from datetime import datetime
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.json_schema import JsonSchemaValue
@@ -84,6 +85,12 @@ class DataSourceOut(BaseModel):
     default_db: str | None
     group_name: str | None
     enabled: bool
+    # 数据源管理页（PRD M1）需要的配置回显字段；密码密文永不出现在任何响应中。
+    username: str = ""
+    sync_cron: str | None = None
+    last_sync_at: datetime | None = None
+    include_rules: list[dict[str, Any]] = Field(default_factory=list)
+    exclude_rules: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TableOut(BaseModel):

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import RequireAuth from "@/components/RequireAuth";
 import AppLayout from "@/layouts/AppLayout";
+import DataSourcesPage from "@/pages/DataSourcesPage";
 import LoginPage from "@/pages/LoginPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import StandardFieldsPage from "@/pages/StandardFieldsPage";
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "tables/:urn", element: <TableDetailPage /> },
       { path: "standard-fields", element: <StandardFieldsPage /> },
       { path: "standard-library", element: <StandardLibraryPage /> },
+      { path: "datasources", element: <DataSourcesPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

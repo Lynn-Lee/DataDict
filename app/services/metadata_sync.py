@@ -313,6 +313,12 @@ class MetadataSyncService:
             if not acquired:
                 return SyncResult(source_id=source_id, status="SKIPPED_LOCKED")
 
+            # rollback 会过期 ORM 实例，失败路径中再访问 source.* 会触发同步 IO 加载，
+            # 因此提前取出纯量值。
+            source_pk = source.id
+            source_default_db = source.default_db or ""
+            started_at = datetime.now(UTC)
+
             try:
                 result = await self._collect_and_write(
                     session,
@@ -323,11 +329,28 @@ class MetadataSyncService:
                 )
                 await session.commit()
                 return result
-            except Exception:
+            except Exception as exc:
                 await session.rollback()
+                # 连接级失败也必须落 sync_job_log/sync_fail_detail，否则失败不可见（M2-5/M12-1）
+                try:
+                    await self._run_recorder.record_run(
+                        session,
+                        source_id=source_pk,
+                        trigger_type=trigger_type,
+                        status="FAILED",
+                        scanned_tables=0,
+                        changed_count=0,
+                        comment_fill_rate=Decimal("0"),
+                        started_at=started_at,
+                        finished_at=datetime.now(UTC),
+                        failures=[_sync_failure(source_pk, source_default_db, "CONNECT", exc)],
+                    )
+                    await session.commit()
+                except Exception:  # noqa: BLE001 - 记录失败不能掩盖原始异常
+                    await session.rollback()
                 raise
             finally:
-                await self._lock.release(session, source.id)
+                await self._lock.release(session, source_pk)
 
     async def _collect_and_write(
         self,

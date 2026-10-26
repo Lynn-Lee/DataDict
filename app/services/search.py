@@ -243,14 +243,15 @@ def build_table_search_statement(query: str, *, limit: int, offset: int) -> Sele
         TableMeta.table_comment,
     ]
     score = func.max(hits.c.score).label("score")
-    return (
+    return cast(
+        "Select[Any]",
         select(*result_columns, score)
         .select_from(TableMeta.__table__.join(hits, hits.c.urn == TableMeta.urn))
         .where(TableMeta.is_deleted.is_(False))
         .group_by(*result_columns)
         .order_by(score.desc(), TableMeta.urn.asc())
         .limit(max(1, limit))
-        .offset(max(0, offset))
+        .offset(max(0, offset)),
     )
 
 

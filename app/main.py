@@ -29,8 +29,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         sync_scheduler = MetadataSyncScheduler()
         await sync_scheduler.start()
+        app.state.sync_scheduler = sync_scheduler
         yield
     finally:
+        app.state.sync_scheduler = None
         if sync_scheduler is not None:
             sync_scheduler.shutdown()
         await close_pools()

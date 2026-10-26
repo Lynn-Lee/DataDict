@@ -1,6 +1,7 @@
 import {
   ApartmentOutlined,
   BookOutlined,
+  CloudServerOutlined,
   DatabaseOutlined,
   LogoutOutlined,
 } from "@ant-design/icons";
@@ -18,6 +19,11 @@ const MENU_ITEMS = [
     key: "/standard-fields",
     icon: <ApartmentOutlined />,
     label: <Link to="/standard-fields">标准定义工作台</Link>,
+  },
+  {
+    key: "/datasources",
+    icon: <CloudServerOutlined />,
+    label: <Link to="/datasources">数据源管理</Link>,
   },
 ];
 

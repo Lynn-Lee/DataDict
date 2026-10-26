@@ -1,4 +1,5 @@
 import importlib
+from types import SimpleNamespace
 from typing import Any
 
 
@@ -43,10 +44,15 @@ async def test_lifespan_starts_and_stops_sync_scheduler(monkeypatch: Any) -> Non
     monkeypatch.setattr(main, "close_pools", close_pools)
     monkeypatch.setattr(main, "MetadataSyncScheduler", lambda: scheduler)
 
-    async with main.lifespan(object()):
+    app_stub = SimpleNamespace(state=SimpleNamespace())
+
+    async with main.lifespan(app_stub):
         assert scheduler.started is True
         assert calls == ["init_pools"]
+        # 手动同步接口依赖 app.state.sync_scheduler（endpoints/datasources.py）
+        assert app_stub.state.sync_scheduler is scheduler
 
+    assert app_stub.state.sync_scheduler is None
     assert scheduler.shutdown_called is True
     assert calls == ["init_pools", "close_pools"]
     get_settings.cache_clear()

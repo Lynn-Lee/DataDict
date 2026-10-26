@@ -18,6 +18,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.models  # noqa: F401 - 注册 ORM 元数据
+from app.core.credentials import encrypt_credential
 from app.models.knowledge import CommonColumnBlacklist, StandardField, StandardFieldItem
 from app.models.metadata import ColumnMeta, DataSource, TableMeta
 from app.schemas.standard_fields import ConfirmStandardFieldPayload
@@ -161,7 +162,7 @@ async def seed(db_url: str) -> None:
                 port=3306,
                 default_db=DEMO_DB,
                 username="demo",
-                password_cipher="demo-not-a-real-credential",  # noqa: S106 - 演示占位，非真实凭证
+                password_cipher=encrypt_credential("demo-only-not-a-real-credential"),
             )
             session.add(source)
             await session.flush()
