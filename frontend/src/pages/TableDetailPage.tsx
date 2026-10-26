@@ -314,8 +314,8 @@ export default function TableDetailPage() {
     return (
       <Card>
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Link to="/search">
-            <Button icon={<ArrowLeftOutlined />}>返回搜索</Button>
+          <Link to="/tables">
+            <Button icon={<ArrowLeftOutlined />}>返回表目录</Button>
           </Link>
           {tableQuery.isError ? (
             <ErrorState
@@ -334,8 +334,8 @@ export default function TableDetailPage() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <Link to="/search">
-        <Button icon={<ArrowLeftOutlined />}>返回搜索</Button>
+      <Link to="/tables">
+        <Button icon={<ArrowLeftOutlined />}>返回表目录</Button>
       </Link>
       <Card>
         <Descriptions

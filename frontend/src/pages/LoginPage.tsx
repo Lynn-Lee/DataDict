@@ -22,7 +22,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(values.username, values.password);
-      navigate("/search", { replace: true });
+      navigate("/standard-library", { replace: true });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "登录失败，请稍后重试";
       setError(message);
