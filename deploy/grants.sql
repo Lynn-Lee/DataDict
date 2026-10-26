@@ -53,7 +53,9 @@ GRANT SELECT ON
     asset_annotation,
     asset_tag_rel,
     annotation_history,
-    common_column_blacklist
+    common_column_blacklist,
+    standard_field,
+    standard_field_item
 TO datadict_collector;
 
 DO $$
@@ -72,5 +74,7 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON
     asset_annotation,
     asset_tag_rel,
     annotation_history,
-    common_column_blacklist
+    common_column_blacklist,
+    standard_field,
+    standard_field_item
 FROM datadict_collector;

@@ -6,7 +6,17 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, Computed, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Computed,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import UniqueConstraint
@@ -146,6 +156,60 @@ class CommonColumnBlacklist(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class StandardField(Base):
+    """标准字段定义（字段统一治理的核心实体）。
+
+    生命周期：CLUSTER/IMPORT/MANUAL 生成 DRAFT 候选 → 人工确认 CONFIRMED →
+    废弃 DEPRECATED。has_conflict 表示组内类型冲突，必须人工裁决后才能定版。
+    """
+
+    __tablename__ = "standard_field"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    standard_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    business_meaning: Mapped[str | None]
+    logical_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    raw_type: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="DRAFT")
+    source_type: Mapped[str] = mapped_column(String(16), default="CLUSTER")
+    has_conflict: Mapped[bool] = mapped_column(Boolean, default=False)
+    type_distribution: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    confirmed_by: Mapped[int | None] = mapped_column(BigInteger)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "uq_standard_field_active_name",
+            "standard_name",
+            unique=True,
+            postgresql_where=text("status IN ('DRAFT', 'CONFIRMED')"),
+        ),
+        Index("idx_standard_field_status", "status"),
+    )
+
+
+class StandardFieldItem(Base):
+    """标准字段定义与存量源字段的关联，定版后回算 conforms 供治理度量。"""
+
+    __tablename__ = "standard_field_item"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    standard_field_id: Mapped[int] = mapped_column(ForeignKey("standard_field.id"), nullable=False)
+    column_urn: Mapped[str] = mapped_column(String(768), nullable=False)
+    conforms: Mapped[bool | None] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("standard_field_id", "column_urn", name="uq_standard_field_item"),
+        Index("idx_standard_field_item_urn", "column_urn"),
+    )
+
+
 KNOWLEDGE_TABLES.update(
     {
         "business_domain",
@@ -156,5 +220,7 @@ KNOWLEDGE_TABLES.update(
         "asset_tag_rel",
         "annotation_history",
         "common_column_blacklist",
+        "standard_field",
+        "standard_field_item",
     }
 )
