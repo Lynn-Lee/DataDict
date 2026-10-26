@@ -26,6 +26,7 @@ import {
 import { ApiError } from "@/api/client";
 import { EmptyState, ErrorState, LoadingState } from "@/components/QueryStates";
 import { getTable, getTableDdl, listColumns, type ColumnMeta } from "@/api/tables";
+import { listChanges, type SchemaChange } from "@/api/changes";
 import { formatBytes, formatCount } from "@/utils/format";
 
 const PAGE_SIZE = 50;
@@ -293,9 +294,122 @@ function DdlTab({ tableUrn, active }: { tableUrn: string; active: boolean }) {
   );
 }
 
+const CHANGE_TYPE_META: Record<string, { color: string; label: string }> = {
+  TABLE_ADDED: { color: "green", label: "表新增" },
+  TABLE_DROPPED: { color: "red", label: "表删除" },
+  COLUMN_ADDED: { color: "green", label: "字段新增" },
+  COLUMN_DROPPED: { color: "red", label: "字段删除" },
+  COLUMN_TYPE_CHANGED: { color: "gold", label: "类型变更" },
+  COLUMN_COMMENT_CHANGED: { color: "blue", label: "注释变更" },
+  INDEX_ADDED: { color: "green", label: "索引新增" },
+  INDEX_DROPPED: { color: "red", label: "索引删除" },
+  INDEX_CHANGED: { color: "gold", label: "索引变更" },
+};
+
+function changeDetail(row: SchemaChange): string {
+  const before = row.before_value ?? {};
+  const after = row.after_value ?? {};
+  switch (row.change_type) {
+    case "COLUMN_TYPE_CHANGED":
+      return `${String(before.raw_type ?? "?")} → ${String(after.raw_type ?? "?")}`;
+    case "COLUMN_COMMENT_CHANGED":
+      return `${String(before.raw_comment ?? "—")} → ${String(after.raw_comment ?? "—")}`;
+    default:
+      break;
+  }
+  if (row.change_type.endsWith("ADDED")) {
+    const parts = [after.raw_type ?? after.table_type, after.raw_comment ?? after.table_comment];
+    return parts.filter(Boolean).map(String).join(" · ");
+  }
+  if (row.change_type.endsWith("DROPPED")) {
+    return String(before.raw_type ?? before.table_type ?? "");
+  }
+  return JSON.stringify(after).slice(0, 80);
+}
+
+function ChangesTab({ tableUrn, active }: { tableUrn: string; active: boolean }) {
+  const [page, setPage] = useState(1);
+  const query = useQuery({
+    queryKey: ["changes", tableUrn, page],
+    queryFn: () => listChanges({ tableUrn, page, pageSize: 20 }),
+    enabled: active,
+    placeholderData: (previous) => previous,
+  });
+
+  if (query.isLoading) {
+    return <LoadingState />;
+  }
+  if (query.isError) {
+    return (
+      <ErrorState
+        error={query.error}
+        onRetry={() => void query.refetch()}
+        forbiddenMessage="无权限查看变更历史"
+        errorMessage="变更历史加载失败"
+      />
+    );
+  }
+
+  const columns: ColumnsType<SchemaChange> = [
+    {
+      title: "时间",
+      dataIndex: "detected_at",
+      width: 170,
+      render: (value: string | null) =>
+        value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—",
+    },
+    {
+      title: "变更类型",
+      dataIndex: "change_type",
+      width: 110,
+      render: (value: string) => {
+        const meta = CHANGE_TYPE_META[value];
+        return <Tag color={meta?.color}>{meta?.label ?? value}</Tag>;
+      },
+    },
+    {
+      title: "对象",
+      dataIndex: "urn",
+      width: 200,
+      render: (value: string) => {
+        const parts = value.split(":");
+        return (
+          <Typography.Text code>
+            {parts.length >= 5 ? parts.slice(4).join(":") : "（表本身）"}
+          </Typography.Text>
+        );
+      },
+    },
+    {
+      title: "详情",
+      key: "detail",
+      ellipsis: true,
+      render: (_, row) => changeDetail(row) || <Typography.Text type="secondary">—</Typography.Text>,
+    },
+  ];
+
+  return (
+    <Table<SchemaChange>
+      rowKey="id"
+      size="small"
+      columns={columns}
+      dataSource={query.data?.items ?? []}
+      locale={{ emptyText: <EmptyState simple description="该表暂无结构变更记录" /> }}
+      pagination={{
+        current: query.data?.page ?? page,
+        pageSize: 20,
+        total: query.data?.total ?? 0,
+        showSizeChanger: false,
+        showTotal: (total) => `共 ${total} 条变更`,
+        onChange: setPage,
+      }}
+    />
+  );
+}
+
 export default function TableDetailPage() {
   const { urn = "" } = useParams();
-  const [activeTab, setActiveTab] = useState<"columns" | "ddl">("columns");
+  const [activeTab, setActiveTab] = useState<"columns" | "ddl" | "changes">("columns");
 
   const tableQuery = useQuery({
     queryKey: ["table", urn],
@@ -369,12 +483,17 @@ export default function TableDetailPage() {
       <Card>
         <Tabs
           activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as "columns" | "ddl")}
+          onChange={(key) => setActiveTab(key as "columns" | "ddl" | "changes")}
           items={[
             {
               key: "columns",
               label: "字段",
               children: <ColumnsTab tableUrn={table.urn} />,
+            },
+            {
+              key: "changes",
+              label: "变更历史",
+              children: <ChangesTab tableUrn={table.urn} active={activeTab === "changes"} />,
             },
             {
               key: "ddl",

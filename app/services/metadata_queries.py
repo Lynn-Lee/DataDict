@@ -9,7 +9,9 @@ from sqlalchemy import Select, func, or_, select
 
 from app.core.exceptions import NotFoundError
 from app.models.metadata import ColumnMeta, DataSource, TableMeta
+from app.models.support import SchemaChangeLog
 from app.schemas.metadata_queries import (
+    ChangeOut,
     ColumnOut,
     DataSourceOut,
     FieldSearchGroupOut,
@@ -67,6 +69,46 @@ class SQLAlchemyMetadataQueryService:
             page_size=page_size,
             items=[_data_source_out(row) for row in rows],
         )
+
+    async def list_changes(
+        self,
+        session: MetadataQuerySession,
+        *,
+        table_urn: str | None,
+        urn: str | None,
+        page: int,
+        page_size: int,
+    ) -> MetadataPage[ChangeOut]:
+        """结构变更流水（PRD M3）：按表或按对象 URN 过滤，时间倒序。"""
+        stmt = select(SchemaChangeLog)
+        if table_urn:
+            stmt = stmt.where(SchemaChangeLog.table_urn == table_urn)
+        if urn:
+            stmt = stmt.where(SchemaChangeLog.urn == urn)
+        total = int(
+            (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+        )
+        rows = await session.execute(
+            stmt.order_by(SchemaChangeLog.detected_at.desc(), SchemaChangeLog.id.desc())
+            .limit(page_size)
+            .offset(_offset(page, page_size))
+        )
+        items = [
+            ChangeOut(
+                id=log.id,
+                urn=log.urn,
+                table_urn=log.table_urn,
+                asset_type=log.asset_type,
+                change_type=log.change_type,
+                before_value=log.before_value,
+                after_value=log.after_value,
+                rename_candidate=log.rename_candidate,
+                rename_status=log.rename_status,
+                detected_at=log.detected_at,
+            )
+            for log in rows.scalars()
+        ]
+        return MetadataPage(total=total, page=page, page_size=page_size, items=items)
 
     async def list_tables(
         self,

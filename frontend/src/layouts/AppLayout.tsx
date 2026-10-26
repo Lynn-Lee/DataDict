@@ -4,6 +4,7 @@ import {
   CloudServerOutlined,
   DatabaseOutlined,
   LogoutOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { Button, Layout, Menu, Space, Typography } from "antd";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -19,6 +20,11 @@ const MENU_ITEMS = [
     key: "/standard-fields",
     icon: <ApartmentOutlined />,
     label: <Link to="/standard-fields">标准定义工作台</Link>,
+  },
+  {
+    key: "/governance/todos",
+    icon: <SafetyCertificateOutlined />,
+    label: <Link to="/governance/todos">同步比对待办</Link>,
   },
   {
     key: "/datasources",

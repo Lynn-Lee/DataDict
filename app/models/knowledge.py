@@ -15,6 +15,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -179,8 +180,8 @@ class StandardField(Base):
     confirmed_by: Mapped[int | None] = mapped_column(BigInteger)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int | None] = mapped_column(BigInteger)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         Index(
@@ -202,7 +203,7 @@ class StandardFieldItem(Base):
     standard_field_id: Mapped[int] = mapped_column(ForeignKey("standard_field.id"), nullable=False)
     column_urn: Mapped[str] = mapped_column(String(768), nullable=False)
     conforms: Mapped[bool | None] = mapped_column(Boolean)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("standard_field_id", "column_urn", name="uq_standard_field_item"),

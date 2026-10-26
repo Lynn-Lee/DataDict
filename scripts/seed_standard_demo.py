@@ -21,7 +21,9 @@ import app.models  # noqa: F401 - 注册 ORM 元数据
 from app.core.credentials import encrypt_credential
 from app.models.knowledge import CommonColumnBlacklist, StandardField, StandardFieldItem
 from app.models.metadata import ColumnMeta, DataSource, TableMeta
+from app.models.support import AnnotationTodo
 from app.schemas.standard_fields import ConfirmStandardFieldPayload
+from app.services.governance import GOVERNANCE_TODO_TYPE, run_governance_sweep
 from app.services.standard_field import (
     attach_tag,
     confirm_standard_field,
@@ -109,6 +111,15 @@ TABLES: dict[str, list[tuple[str, str, str, str | None]]] = {
         ("site_code", "varchar(16)", "STRING", "网点编号"),
         ("create_time", "datetime", "DATETIME", "扫描时间"),
     ],
+    # 模拟“标准定版后新上线的表”：治理扫描应拦截其中的违规字段
+    "ops_new_tracking": [
+        ("id", "bigint", "INT", "主键ID"),
+        ("waybill_no", "varchar(32)", "STRING", "运单编号"),  # 符合标准
+        ("send_site_code", "bigint", "INT", "寄件网点"),  # 违反标准（应 varchar(16)）
+    ],
+    "ops_vendor_sync": [
+        ("send_site_code", "varchar(64)", "STRING", "寄件网点（供应商侧定义）"),  # 长度违反标准
+    ],
 }
 
 BLACKLIST = ["status", "type", "name", "code", "remark"]
@@ -120,6 +131,9 @@ async def seed(db_url: str) -> None:
     async with factory() as session:
         async with session.begin():
             # 清理演示范围（标准定义全清，演示库按 字段→表→数据源 顺序重建）
+            await session.execute(
+                delete(AnnotationTodo).where(AnnotationTodo.todo_type == GOVERNANCE_TODO_TYPE)
+            )
             await session.execute(delete(StandardFieldItem))
             await session.execute(delete(StandardField))
             demo_source_ids = (
@@ -216,12 +230,19 @@ async def seed(db_url: str) -> None:
                 for tag in tags:
                     await attach_tag(session, sf.id, tag)
 
+        # 定版后跑治理扫描：新表违规字段生成待办（演示同步比对拦截）
+        sweep = await run_governance_sweep(session)
+
         await session.commit()
 
     print(f"seeded columns: {ordinal_base}")
     print(
         f"clustering: generated={summary.generated} updated={summary.updated} "
         f"skipped_confirmed={summary.skipped_confirmed} skipped_conflict={summary.skipped_conflict}"
+    )
+    print(
+        f"sweep: conforming={sweep.attached_conforming} conflicting={sweep.attached_conflicting} "
+        f"todos={sweep.todos_created}"
     )
     await engine.dispose()
 

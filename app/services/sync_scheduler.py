@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.db.session import collector_session
 from app.models.metadata import DataSource
+from app.services.governance import run_governance_sweep_standalone
 from app.services.metadata_sync import MetadataSyncService, SyncSession
 
 
@@ -61,6 +62,18 @@ class MetadataSyncScheduler:
 
     async def start(self) -> None:
         await self.refresh_jobs()
+        # 每日治理扫描：把新同步进来的字段与已定版标准比对（T-S8a）。
+        # 与各数据源 cron 错开（默认同步多在凌晨 2 点），用 web 会话写知识层，
+        # 不在采集事务内——采集角色对知识层无写权限（红线第 6 条）。
+        self._scheduler.add_job(
+            run_governance_sweep_standalone,
+            CronTrigger(hour=3, minute=30, timezone="UTC"),
+            id="governance-sweep",
+            args=[],
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
         self._scheduler.start()
 
     def shutdown(self) -> None:

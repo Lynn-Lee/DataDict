@@ -136,7 +136,8 @@ async def test_scheduler_rebuilds_enabled_source_cron_jobs_on_startup() -> None:
     await service.start()
 
     assert backend.started is True
-    assert [job["id"] for job in backend.jobs] == ["sync-source-7"]
+    # 数据源 cron job + 每日治理扫描 job（T-S8a）
+    assert [job["id"] for job in backend.jobs] == ["sync-source-7", "governance-sweep"]
     assert backend.jobs[0]["args"] == [7]
     assert backend.jobs[0]["replace_existing"] is True
     assert backend.jobs[0]["coalesce"] is True

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.db.session import get_web_session
 from app.schemas.metadata_queries import (
+    ChangeOut,
     ColumnOut,
     DataSourceOut,
     MetadataPage,
@@ -158,3 +159,31 @@ async def search(
     page_size: Annotated[int, Query(ge=1, le=100, description="每页数量", examples=[20])] = 20,
 ) -> SearchOut:
     return await service.search(session, query=q, page=page, page_size=page_size)
+
+
+@router.get(
+    "/changes",
+    response_model=MetadataPage[ChangeOut],
+    summary="结构变更记录",
+    description=(
+        "变更流水（PRD M3/M9）：表新增/删除、字段新增/删除、类型变更、注释变更、索引变更。"
+        "按 table_urn 查整表时间线，或按 urn 查单字段历史；时间倒序分页。"
+    ),
+)
+async def list_changes(
+    session: Annotated[MetadataQuerySession, Depends(get_web_session)],
+    service: Annotated[SQLAlchemyMetadataQueryService, Depends(get_metadata_query_service)],
+    table_urn: Annotated[
+        TableUrn | None,
+        Query(description="表 URN，查该表的整表变更时间线"),
+    ] = None,
+    urn: Annotated[
+        ColumnUrn | None,
+        Query(description="字段 URN，查单字段变更历史"),
+    ] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> MetadataPage[ChangeOut]:
+    return await service.list_changes(
+        session, table_urn=table_urn, urn=urn, page=page, page_size=page_size
+    )

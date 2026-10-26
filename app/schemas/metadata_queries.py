@@ -93,6 +93,21 @@ class DataSourceOut(BaseModel):
     exclude_rules: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ChangeOut(BaseModel):
+    """结构变更记录（schema_change_log，PRD M3/M9 变更类接口）。"""
+
+    id: int
+    urn: str
+    table_urn: str | None = None
+    asset_type: str | None = None
+    change_type: str
+    before_value: dict[str, Any] | None = None
+    after_value: dict[str, Any] | None = None
+    rename_candidate: str | None = None
+    rename_status: str | None = None
+    detected_at: datetime | None = None
+
+
 class TableOut(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": TABLE_OUT_EXAMPLE})
 
