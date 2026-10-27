@@ -55,7 +55,8 @@ GRANT SELECT ON
     annotation_history,
     common_column_blacklist,
     standard_field,
-    standard_field_item
+    standard_field_item,
+    excel_field_doc
 TO datadict_collector;
 
 DO $$
@@ -76,5 +77,6 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON
     annotation_history,
     common_column_blacklist,
     standard_field,
-    standard_field_item
+    standard_field_item,
+    excel_field_doc
 FROM datadict_collector;

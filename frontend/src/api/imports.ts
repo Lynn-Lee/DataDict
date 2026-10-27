@@ -7,12 +7,9 @@ export interface ExcelImportReport {
   column_docs: number;
   dicts_parsed: number;
   distinct_tables: number;
-  matched_columns: number;
-  annotations_created: number;
-  annotations_skipped_existing: number;
-  unmatched_docs: number;
+  docs_stored: number;
+  matched_synced_columns: number;
   dicts_imported: number;
-  unmatched_tables: string[];
 }
 
 export function importExcel(file: File, dryRun: boolean): Promise<ExcelImportReport> {

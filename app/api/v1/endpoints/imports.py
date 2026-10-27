@@ -30,10 +30,10 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
     response_model=ExcelImportOut,
     summary="上传导入 Excel 数据字典种子",
     description=(
-        "上传历史数据字典 .xlsx（≤20MB）。解析出字段文档与枚举字典："
-        "字段描述按 (表名, 字段名) 匹配已同步字段后写为 PENDING/IMPORT 候选标注"
-        "（不覆盖已有人工/已确认标注），枚举字典按 code upsert。"
-        "dry_run=true 仅返回解析预览，不写库。未匹配的文档在对应数据源同步后重传即可增量导入。"
+        "上传历史数据字典 .xlsx（≤20MB）。Excel 与源库同步是平级的两路输入来源："
+        "字段文档原文留档（按文件名幂等，重传覆盖旧留档），枚举字典按 code upsert；"
+        "随后在标准定义工作台「重新聚类」即可与源库字段按字段名取并集生成候选标准。"
+        "dry_run=true 仅返回解析预览，不写库。"
     ),
 )
 async def import_excel(
@@ -57,22 +57,21 @@ async def import_excel(
         raise DataDictError(f"Excel 解析失败：{exc}") from exc
 
     parsed = parse_workbook(sheets)
+    distinct_tables = len({doc.table_name for doc in parsed.columns})
     out = ExcelImportOut(
         dry_run=dry_run,
         sheets=len(sheets),
         column_docs=len(parsed.columns),
         dicts_parsed=len(parsed.dicts),
-        distinct_tables=len({doc.table_name for doc in parsed.columns}),
+        distinct_tables=distinct_tables,
     )
     if dry_run:
         return out
 
-    report = await import_parsed_workbook(session, parsed)
+    report = await import_parsed_workbook(session, parsed, source_file=filename)
     await session.commit()
-    out.matched_columns = report.matched_columns
-    out.annotations_created = report.annotations_created
-    out.annotations_skipped_existing = report.annotations_skipped_existing
-    out.unmatched_docs = report.unmatched_docs
+    out.docs_stored = report.docs_stored
+    out.distinct_tables = report.distinct_tables or distinct_tables
+    out.matched_synced_columns = report.matched_synced_columns
     out.dicts_imported = report.dicts_imported
-    out.unmatched_tables = report.unmatched_tables
     return out

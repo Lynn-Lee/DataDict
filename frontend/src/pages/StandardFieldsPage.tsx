@@ -162,7 +162,23 @@ export default function StandardFieldsPage() {
           </Typography.Text>
         ),
       },
-      { title: "覆盖表数", dataIndex: "candidate_count", width: 90, align: "right" },
+      {
+        title: "来源",
+        key: "sources",
+        width: 130,
+        render: (_, row) => (
+          <Space direction="vertical" size={0}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              源库 {row.candidate_count} 字段
+            </Typography.Text>
+            {row.doc_count > 0 && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Excel 文档 {row.doc_count} 条
+              </Typography.Text>
+            )}
+          </Space>
+        ),
+      },
       {
         title: "类型分布",
         key: "distribution",
@@ -325,8 +341,9 @@ export default function StandardFieldsPage() {
         {confirmTarget && (
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Typography.Text type="secondary">
-              该字段名在 {confirmTarget.candidate_count} 张表中出现。定版后成为全公司唯一标准，
-              存量字段将按类型一致性回算 conforms 标记。
+              证据来源：源库 {confirmTarget.candidate_count} 个字段
+              {confirmTarget.doc_count > 0 && `，Excel 文档 ${confirmTarget.doc_count} 条`}。
+              定版后成为全公司唯一标准，存量字段将按类型一致性回算 conforms 标记。
             </Typography.Text>
             {confirmTarget.has_conflict && (
               <Alert

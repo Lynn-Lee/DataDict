@@ -15,6 +15,7 @@ export interface StandardField {
   has_conflict: boolean;
   type_distribution: Record<string, number> | null;
   candidate_count: number;
+  doc_count: number;
   version: number;
 }
 

@@ -176,6 +176,8 @@ class StandardField(Base):
     has_conflict: Mapped[bool] = mapped_column(Boolean, default=False)
     type_distribution: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Excel 文档来源出现次数（candidate_count 为源库同步出现次数，两路并集产候选）
+    doc_count: Mapped[int] = mapped_column(Integer, default=0)
     version: Mapped[int] = mapped_column(Integer, default=1)
     confirmed_by: Mapped[int | None] = mapped_column(BigInteger)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -211,6 +213,34 @@ class StandardFieldItem(Base):
     )
 
 
+class ExcelFieldDoc(Base):
+    """Excel 历史数据字典的字段文档留档（标准定义库的输入来源之一）。
+
+    与源库同步的 column_meta 平级：候选标准定义按字段名取两路的并集，
+    只在 Excel 出现、或只在源库出现的字段名同样产出候选。
+    按 source_file 幂等——同一文件重复上传先清旧记录再写入。
+    """
+
+    __tablename__ = "excel_field_doc"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_file: Mapped[str] = mapped_column(String(255), nullable=False)
+    sheet_name: Mapped[str | None] = mapped_column(String(128))
+    table_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    table_desc: Mapped[str | None]
+    column_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    column_desc: Mapped[str | None]
+    column_type: Mapped[str | None] = mapped_column(String(128))
+    remark: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_excel_doc_column", "column_name"),
+        Index("idx_excel_doc_table", "table_name", "column_name"),
+        Index("idx_excel_doc_file", "source_file"),
+    )
+
+
 KNOWLEDGE_TABLES.update(
     {
         "business_domain",
@@ -223,5 +253,6 @@ KNOWLEDGE_TABLES.update(
         "common_column_blacklist",
         "standard_field",
         "standard_field_item",
+        "excel_field_doc",
     }
 )

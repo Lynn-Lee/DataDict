@@ -19,7 +19,7 @@ export default function ExcelImportCard() {
       message.success(
         result.dry_run
           ? `预览完成：${result.column_docs} 条字段文档 / ${result.dicts_parsed} 个字典（未写库）`
-          : `导入完成：新增候选标注 ${result.annotations_created} 条，字典 ${result.dicts_imported} 个`,
+          : `导入完成：留档 ${result.docs_stored} 条字段文档，字典 ${result.dicts_imported} 个，请点「重新聚类」生成候选`,
       );
     },
     onError: (err) => message.error(err instanceof Error ? err.message : "导入失败"),
@@ -29,9 +29,9 @@ export default function ExcelImportCard() {
     <Card size="small" title="Excel 种子导入（历史数据字典）">
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Text type="secondary">
-          上传历史数据字典 .xlsx（≤20MB）。字段描述按「表名+字段名」匹配已同步字段，写为
-          待确认（PENDING）候选标注，不覆盖人工标注；枚举字典进字典库。未匹配的部分在对应
-          数据源同步后重新上传即可增量导入。
+          上传历史数据字典 .xlsx（≤20MB）。Excel 与源库同步是平级的两路输入来源：字段文档
+          原文留档，枚举字典进字典库；随后点「重新聚类」即按字段名取两路并集生成候选标准
+          定义。同一文件重复上传会覆盖旧留档（幂等）。
         </Typography.Text>
 
         <Upload.Dragger
@@ -74,17 +74,11 @@ export default function ExcelImportCard() {
               <Descriptions.Item label="枚举字典">{report.dicts_parsed}</Descriptions.Item>
               {!report.dry_run && (
                 <>
-                  <Descriptions.Item label="匹配字段">{report.matched_columns}</Descriptions.Item>
-                  <Descriptions.Item label="新增候选标注">
-                    {report.annotations_created}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="跳过（保护人工标注）">
-                    {report.annotations_skipped_existing}
+                  <Descriptions.Item label="已留档文档">{report.docs_stored}</Descriptions.Item>
+                  <Descriptions.Item label="与已同步字段重合">
+                    {report.matched_synced_columns}
                   </Descriptions.Item>
                   <Descriptions.Item label="字典已导入">{report.dicts_imported}</Descriptions.Item>
-                  <Descriptions.Item label="未匹配文档" span={2}>
-                    {report.unmatched_docs}
-                  </Descriptions.Item>
                 </>
               )}
             </Descriptions>
@@ -95,14 +89,11 @@ export default function ExcelImportCard() {
                 message="预览未写库。确认解析结果无误后，取消勾选「仅预览」再导入。"
               />
             ) : (
-              report.unmatched_tables.length > 0 && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message={`有 ${report.unmatched_docs} 条文档未匹配到已同步字段`}
-                  description={`未匹配表示例：${report.unmatched_tables.slice(0, 8).join("、")}${report.unmatched_tables.length > 8 ? " 等" : ""}。多因这些数据源尚未接入，同步后重新上传即可增量导入。`}
-                />
-              )
+              <Alert
+                type="success"
+                showIcon
+                message="已留档为候选来源。点上方「重新聚类」，Excel 文档会与源库字段按字段名并集生成候选标准定义。"
+              />
             )}
           </>
         )}

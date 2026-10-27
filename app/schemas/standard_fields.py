@@ -16,6 +16,7 @@ class StandardFieldOut(BaseModel):
     has_conflict: bool
     type_distribution: dict[str, int] | None = None
     candidate_count: int
+    doc_count: int = 0
     version: int
 
 

@@ -1,28 +1,28 @@
-"""Excel 历史数据字典种子导入（T-S5）。
+"""Excel 历史数据字典导入（T-S5 / T-S9）。
 
-遵循 PRD 修订 B② 原则：导入内容一律进候选队列，不直接生效——
-- 模块 sheet 的表结构文档 → 按 (表名, 字段名) 匹配已同步字段 →
-  写 asset_annotation(status=PENDING, source_type=IMPORT) 候选，人工确认后生效；
-  已有人工标注（MANUAL）或已确认（CONFIRMED）的一律不覆盖。
-- 「数据字典定义」sheet → dict 表（source_type=IMPORT），枚举字典是参考数据，
-  按 code upsert，保留人工后续修改（再次导入会覆盖 items，界面上可再编辑）。
+定位：Excel 与源库同步是**平级的两路输入来源**，都只为标准定义库提供原始数据——
+不要求同一字段两路都出现，只在 Excel 出现或只在源库出现的字段名同样产出候选。
 
-解析层是纯函数（只吃行值列表），openpyxl 仅出现在脚本层，便于单测。
+因此导入只做两件事，**不写字段级标注**（字段不单独承载业务含义，标准定义库才是真相源）：
+- 模块 sheet 的字段文档 → 原文留档 `excel_field_doc`（按 source_file 幂等重传），
+  由候选生成环节与 column_meta 按字段名取并集消费；
+- 「数据字典定义」sheet → `dict` 表（source_type=IMPORT），枚举字典是参考数据。
+
+解析层是纯函数（只吃行值列表），openpyxl 仅在读文件时延迟导入，便于单测。
 """
 
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, BinaryIO
 
-from sqlalchemy import select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.knowledge import AnnotationHistory, AssetAnnotation, Dictionary
+from app.models.knowledge import Dictionary, ExcelFieldDoc
 from app.models.metadata import ColumnMeta, TableMeta
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -59,12 +59,10 @@ class ParsedWorkbook:
 @dataclass
 class ExcelImportReport:
     column_docs: int = 0
-    matched_columns: int = 0
-    annotations_created: int = 0
-    annotations_skipped_existing: int = 0
-    unmatched_docs: int = 0
+    docs_stored: int = 0
+    distinct_tables: int = 0
+    matched_synced_columns: int = 0
     dicts_imported: int = 0
-    unmatched_tables: list[str] = field(default_factory=list)
 
 
 def load_sheets_from_fileobj(fh: BinaryIO) -> dict[str, list[list[Any]]]:
@@ -301,7 +299,11 @@ def _has_cjk(text_value: str) -> bool:
 
 
 def _doc_score(doc: ExcelColumnDoc) -> tuple[int, int, int]:
-    """文档质量分：有类型 > 含中文释义 > 释义更长。"""
+    """文档质量分：有类型 > 含中文释义 > 释义更长。
+
+    同一 (表, 字段) 可能在多个 sheet/区块重复出现（如索引清单被误解析成字段行），
+    留档时按此分数取最优一条。
+    """
     desc = doc.column_desc or ""
     return (1 if doc.column_type else 0, 1 if _has_cjk(desc) else 0, len(desc))
 
@@ -310,23 +312,18 @@ async def import_parsed_workbook(
     session: AsyncSession,
     parsed: ParsedWorkbook,
     *,
-    operator_id: int | None = None,
+    source_file: str,
+    sheet_names: dict[tuple[str, str], str] | None = None,
 ) -> ExcelImportReport:
+    """把解析结果留档为标准定义库的输入来源之一（不写字段级标注）。
+
+    Excel 与源库同步是平级的两路来源：候选标准定义按字段名取并集生成，
+    因此这里只做原文留档 + 枚举字典入库，由聚类环节统一消费。
+    同一 source_file 重复上传时先清旧留档，保证幂等。
+    """
+    del sheet_names  # 预留：sheet 归属已在解析阶段丢失，留档不依赖
     report = ExcelImportReport(column_docs=len(parsed.columns))
 
-    # (表名, 字段名) 小写索引 → 已同步字段 URN（同名表跨库时全部匹配）
-    col_rows = await session.execute(
-        select(ColumnMeta.urn, ColumnMeta.column_name, TableMeta.table_name)
-        .select_from(ColumnMeta)
-        .join(TableMeta, TableMeta.urn == ColumnMeta.table_urn)
-        .where(ColumnMeta.is_deleted.is_(False))
-    )
-    urn_index: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for urn, column_name, table_name in col_rows:
-        urn_index[(table_name.lower(), column_name.lower())].append(urn)
-
-    # 同一字段可能出现在多个 sheet/区块（如索引清单被误解析成字段行），
-    # 取最优文档：有类型的 > 无类型；释义含中文的 > 纯英文；更长的 > 更短。
     best_doc: dict[tuple[str, str], ExcelColumnDoc] = {}
     for doc in parsed.columns:
         key = (doc.table_name.lower(), doc.column_name.lower())
@@ -334,83 +331,36 @@ async def import_parsed_workbook(
         if current is None or _doc_score(doc) > _doc_score(current):
             best_doc[key] = doc
 
-    existing_rows = await session.execute(
-        select(
-            AssetAnnotation.urn,
-            AssetAnnotation.business_meaning,
-            AssetAnnotation.source_type,
-            AssetAnnotation.status,
-        )
-    )
-    existing = {
-        urn: (meaning, source_type, status) for urn, meaning, source_type, status in existing_rows
-    }
+    await session.execute(delete(ExcelFieldDoc).where(ExcelFieldDoc.source_file == source_file))
 
     now = datetime.now(UTC)
-    seen_tables: set[str] = set()
+    rows = [
+        {
+            "source_file": source_file,
+            "table_name": doc.table_name,
+            "table_desc": doc.table_desc,
+            "column_name": doc.column_name,
+            "column_desc": doc.column_desc,
+            "column_type": doc.column_type,
+            "remark": doc.remark,
+            "created_at": now,
+        }
+        for doc in best_doc.values()
+    ]
+    if rows:
+        await session.execute(insert(ExcelFieldDoc), rows)
+    report.docs_stored = len(rows)
+    report.distinct_tables = len({doc.table_name for doc in best_doc.values()})
 
-    for key, doc in best_doc.items():
-        urns = urn_index.get(key)
-        if not urns:
-            report.unmatched_docs += 1
-            seen_tables.add(doc.table_name)
-            continue
-        report.matched_columns += len(urns)
-        if not doc.column_desc:
-            continue
-        for urn in urns:
-            prev = existing.get(urn)
-            if prev is not None and (prev[1] == "MANUAL" or prev[2] == "CONFIRMED"):
-                report.annotations_skipped_existing += 1
-                continue
-            before = (
-                {"business_meaning": prev[0], "source_type": prev[1], "status": prev[2]}
-                if prev
-                else None
-            )
-            stmt = (
-                pg_insert(AssetAnnotation)
-                .values(
-                    urn=urn,
-                    asset_type="COLUMN",
-                    business_meaning=doc.column_desc,
-                    source_desc=doc.remark,
-                    status="PENDING",
-                    source_type="IMPORT",
-                    created_by=operator_id,
-                    updated_by=operator_id,
-                    created_at=now,
-                    updated_at=now,
-                )
-                .on_conflict_do_update(
-                    index_elements=[AssetAnnotation.urn],
-                    set_={
-                        "business_meaning": doc.column_desc,
-                        "source_desc": doc.remark,
-                        "status": "PENDING",
-                        "source_type": "IMPORT",
-                        "updated_by": operator_id,
-                        "updated_at": now,
-                    },
-                )
-            )
-            await session.execute(stmt)
-            await session.execute(
-                pg_insert(AnnotationHistory).values(
-                    urn=urn,
-                    before_data=before,
-                    after_data={
-                        "business_meaning": doc.column_desc,
-                        "source_desc": doc.remark,
-                        "status": "PENDING",
-                        "source_type": "IMPORT",
-                    },
-                    operator_id=operator_id,
-                    created_at=now,
-                )
-            )
-            existing[urn] = (doc.column_desc, "IMPORT", "PENDING")
-            report.annotations_created += 1
+    # 信息项：与已同步字段的重合度，帮助用户判断该文件当前的可用比例
+    synced = await session.execute(
+        select(ColumnMeta.column_name, TableMeta.table_name)
+        .select_from(ColumnMeta)
+        .join(TableMeta, TableMeta.urn == ColumnMeta.table_urn)
+        .where(ColumnMeta.is_deleted.is_(False))
+    )
+    synced_keys = {(table_name.lower(), column_name.lower()) for column_name, table_name in synced}
+    report.matched_synced_columns = sum(1 for key in best_doc if key in synced_keys)
 
     for dict_doc in parsed.dicts:
         stmt = (
@@ -436,6 +386,5 @@ async def import_parsed_workbook(
         await session.execute(stmt)
         report.dicts_imported += 1
 
-    report.unmatched_tables = sorted(seen_tables)[:50]
     await session.flush()
     return report

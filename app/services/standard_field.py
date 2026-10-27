@@ -5,7 +5,7 @@
 字段名即最强的语义先验；同名不同型自动标记冲突，强制人工裁决。
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -13,10 +13,12 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.collectors.type_mapper import normalize_column_type
 from app.core.exceptions import ConflictError, DataDictError, NotFoundError
 from app.models.knowledge import (
     AssetTagRel,
     CommonColumnBlacklist,
+    ExcelFieldDoc,
     StandardField,
     StandardFieldItem,
     Tag,
@@ -42,7 +44,7 @@ def _standard_tag_urn(standard_id: int) -> str:
 
 @dataclass
 class ClusterCandidate:
-    """单个字段名聚合出的候选标准定义。"""
+    """单个字段名聚合出的候选标准定义（源库 + Excel 文档两路并集）。"""
 
     column_name: str
     candidate_count: int
@@ -52,6 +54,7 @@ class ClusterCandidate:
     has_conflict: bool
     suggested_meaning: str | None
     column_urns: list[str] = field(default_factory=list)
+    doc_count: int = 0
 
 
 @dataclass
@@ -63,57 +66,93 @@ class ClusteringSummary:
 
 
 def build_name_clusters(
-    rows: Iterable[tuple[str, str, str, str | None, str | None]],
+    sync_rows: Iterable[tuple[str, str, str, str | None, str | None]],
+    doc_rows: Iterable[tuple[str, str | None, str | None]] = (),
     *,
     excluded_names: set[str] | None = None,
 ) -> list[ClusterCandidate]:
-    """把 (column_name, urn, raw_type, logical_type, raw_comment) 行聚成候选组。
+    """按字段名聚合两路来源，产出候选标准定义。
 
-    推荐规则：类型取组内众数；逻辑类型不一致 → has_conflict 强制人工裁决；
-    中文释义取组内最高频的非空原始注释，仅作确认时的预填。
+    - `sync_rows`：(column_name, urn, raw_type, logical_type, raw_comment)，源库实际用法
+    - `doc_rows`：(column_name, column_type, column_desc)，Excel 历史文档
+
+    两路是**并集**关系：只在一路出现的字段名同样产出候选（Excel 里有、源库还没同步的
+    字段可以先定标准）。推荐规则：类型取合并后的众数；逻辑类型不一致 → has_conflict
+    强制人工裁决；释义取两路中最高频的非空描述，仅作确认时的预填。
     """
     excluded = excluded_names or set()
-    grouped: dict[str, list[tuple[str, str, str | None, str | None]]] = {}
-    for column_name, urn, raw_type, logical_type, raw_comment in rows:
+    types: dict[str, Counter[str]] = defaultdict(Counter)
+    logicals: dict[str, Counter[str]] = defaultdict(Counter)
+    meanings: dict[str, Counter[str]] = defaultdict(Counter)
+    urns: dict[str, list[str]] = defaultdict(list)
+    doc_counts: dict[str, int] = defaultdict(int)
+
+    for column_name, urn, raw_type, logical_type, raw_comment in sync_rows:
         if column_name in excluded:
             continue
-        grouped.setdefault(column_name, []).append((urn, raw_type, logical_type, raw_comment))
+        types[column_name][raw_type] += 1
+        if logical_type:
+            logicals[column_name][logical_type] += 1
+        if raw_comment and raw_comment.strip():
+            meanings[column_name][raw_comment.strip()] += 1
+        urns[column_name].append(urn)
+
+    for column_name, column_type, column_desc in doc_rows:
+        if column_name in excluded:
+            continue
+        doc_counts[column_name] += 1
+        if column_type and column_type.strip():
+            # Excel 里存在全角括号写法（varchar（32）），归一后再计数，避免污染类型分布
+            raw = column_type.strip().replace("（", "(").replace("）", ")")
+            types[column_name][raw] += 1
+            # Excel 未标明库类型，按 MySQL 方言归一（历史字典以 MySQL/TiDB 为主）
+            normalized = normalize_column_type("mysql", raw)
+            if normalized != "UNKNOWN":
+                logicals[column_name][normalized] += 1
+        if column_desc and column_desc.strip():
+            meanings[column_name][column_desc.strip()] += 1
 
     candidates: list[ClusterCandidate] = []
-    for column_name, members in grouped.items():
-        type_counter = Counter(raw_type for _, raw_type, _, _ in members)
-        logical_counter = Counter(logical for _, _, logical, _ in members)
-        meaning_counter = Counter(
-            comment.strip() for _, _, _, comment in members if comment and comment.strip()
-        )
-        has_conflict = len(logical_counter) > 1
-        top_raw, _ = type_counter.most_common(1)[0]
-        top_logical = logical_counter.most_common(1)[0][0]
+    for column_name in set(types) | set(urns) | set(doc_counts):
+        type_counter = types[column_name]
+        logical_counter = logicals[column_name]
+        meaning_counter = meanings[column_name]
+        top_raw = type_counter.most_common(1)[0][0] if type_counter else None
+        top_logical = logical_counter.most_common(1)[0][0] if logical_counter else None
         candidates.append(
             ClusterCandidate(
                 column_name=column_name,
-                candidate_count=len(members),
+                candidate_count=len(urns[column_name]),
                 type_distribution=dict(sorted(type_counter.items(), key=lambda kv: -kv[1])),
                 recommended_logical_type=top_logical,
                 recommended_raw_type=top_raw,
-                has_conflict=has_conflict,
-                suggested_meaning=meaning_counter.most_common(1)[0][0] if meaning_counter else None,
-                column_urns=[urn for urn, _, _, _ in members],
+                has_conflict=len(logical_counter) > 1,
+                suggested_meaning=(
+                    meaning_counter.most_common(1)[0][0] if meaning_counter else None
+                ),
+                column_urns=list(urns[column_name]),
+                doc_count=doc_counts[column_name],
             )
         )
-    candidates.sort(key=lambda c: -c.candidate_count)
+    candidates.sort(key=lambda c: (-c.candidate_count, -c.doc_count))
     return candidates
 
 
-async def load_cluster_rows(session: AsyncSession) -> list[tuple[str, str, str, str, str | None]]:
-    """读取未删除字段的聚类输入行，排除黑名单字段名。"""
-    blacklist_rows = await session.execute(
+async def load_excluded_names(session: AsyncSession) -> set[str]:
+    """黑名单字段名：同名不同义风险高，不参与自动聚类。"""
+    rows = await session.execute(
         select(CommonColumnBlacklist.column_name).where(
             CommonColumnBlacklist.is_whitelist.is_(False)
         )
     )
-    excluded_names = {name for (name,) in blacklist_rows}
+    return {name for (name,) in rows}
 
+
+async def load_cluster_rows(
+    session: AsyncSession, excluded_names: set[str] | None = None
+) -> list[tuple[str, str, str, str, str | None]]:
+    """源库侧聚类输入：未删除字段的 (字段名, urn, 原始类型, 逻辑类型, 注释)。"""
+    excluded = excluded_names if excluded_names is not None else await load_excluded_names(session)
     rows = await session.execute(
         select(
             ColumnMeta.column_name,
@@ -126,19 +165,36 @@ async def load_cluster_rows(session: AsyncSession) -> list[tuple[str, str, str, 
     return [
         (name, urn, raw_type, logical_type, comment)
         for name, urn, raw_type, logical_type, comment in rows
-        if name not in excluded_names
+        if name not in excluded
+    ]
+
+
+async def load_doc_rows(
+    session: AsyncSession, excluded_names: set[str] | None = None
+) -> list[tuple[str, str | None, str | None]]:
+    """Excel 文档侧聚类输入：留档的 (字段名, 文档类型, 字段描述)。"""
+    excluded = excluded_names if excluded_names is not None else await load_excluded_names(session)
+    rows = await session.execute(
+        select(ExcelFieldDoc.column_name, ExcelFieldDoc.column_type, ExcelFieldDoc.column_desc)
+    )
+    return [
+        (name, column_type, column_desc)
+        for name, column_type, column_desc in rows
+        if name not in excluded
     ]
 
 
 async def generate_standard_field_candidates(session: AsyncSession) -> ClusteringSummary:
-    """按字段名聚类生成/刷新 DRAFT 候选标准定义。
+    """按字段名聚类（源库 ∪ Excel 文档）生成/刷新 DRAFT 候选标准定义。
 
     幂等可重跑：已有 DRAFT 候选更新统计并整体替换源字段关联；
     已 CONFIRMED 的同名标准不动（定版结论优先于重新聚类）。
     """
     summary = ClusteringSummary()
-    rows = await load_cluster_rows(session)
-    candidates = build_name_clusters(rows)
+    excluded = await load_excluded_names(session)
+    sync_rows = await load_cluster_rows(session, excluded)
+    doc_rows = await load_doc_rows(session, excluded)
+    candidates = build_name_clusters(sync_rows, doc_rows)
 
     existing = await session.execute(
         select(StandardField).where(
@@ -150,6 +206,10 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
     for candidate in candidates:
         current = existing_by_name.get(candidate.column_name)
         if current is not None and current.status == "CONFIRMED":
+            # 定版结论不可被重新聚类覆盖，但证据计数是事实数据，保持最新
+            current.candidate_count = candidate.candidate_count
+            current.doc_count = candidate.doc_count
+            current.type_distribution = candidate.type_distribution
             summary.skipped_confirmed += 1
             continue
 
@@ -158,7 +218,7 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
             standard = StandardField(
                 standard_name=candidate.column_name,
                 business_meaning=candidate.suggested_meaning,
-                logical_type=candidate.recommended_logical_type or "STRING",
+                logical_type=candidate.recommended_logical_type or "UNKNOWN",
                 # 冲突组不给自动推荐类型，等人工裁决
                 raw_type=None if candidate.has_conflict else candidate.recommended_raw_type,
                 status="DRAFT",
@@ -166,6 +226,7 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
                 has_conflict=candidate.has_conflict,
                 type_distribution=distribution,
                 candidate_count=candidate.candidate_count,
+                doc_count=candidate.doc_count,
             )
             session.add(standard)
             await session.flush()
@@ -180,6 +241,7 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
             current.business_meaning = current.business_meaning or candidate.suggested_meaning
             current.type_distribution = distribution
             current.candidate_count = candidate.candidate_count
+            current.doc_count = candidate.doc_count
             current.has_conflict = candidate.has_conflict
             current.source_type = "CLUSTER"
             if not current.has_conflict:
@@ -218,6 +280,7 @@ def _to_out(sf: StandardField) -> StandardFieldOut:
         has_conflict=sf.has_conflict,
         type_distribution=sf.type_distribution,
         candidate_count=sf.candidate_count,
+        doc_count=sf.doc_count,
         version=sf.version,
     )
 

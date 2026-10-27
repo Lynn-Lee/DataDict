@@ -10,10 +10,9 @@ class ExcelImportOut(BaseModel):
     sheets: int
     column_docs: int = Field(description="解析出的字段文档数")
     dicts_parsed: int = Field(description="解析出的枚举字典数")
-    distinct_tables: int
-    matched_columns: int = 0
-    annotations_created: int = 0
-    annotations_skipped_existing: int = 0
-    unmatched_docs: int = 0
+    distinct_tables: int = 0
+    docs_stored: int = Field(default=0, description="留档的字段文档数（同表同字段取最优后）")
+    matched_synced_columns: int = Field(
+        default=0, description="与已同步字段重合的文档数（信息项，反映当前可用比例）"
+    )
     dicts_imported: int = 0
-    unmatched_tables: list[str] = Field(default_factory=list)

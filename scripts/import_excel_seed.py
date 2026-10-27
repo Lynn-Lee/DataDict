@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 """导入历史数据字典 Excel 种子（T-S5）。
 
-解析逻辑在 app/services/excel_import.py（纯函数，可单测）；Web 上传导入见
+解析与留档逻辑在 app/services/excel_import.py；Web 上传导入见
 POST /api/v1/imports/excel（同一套服务）。本脚本供运维批量/离线场景使用。
 
-    python scripts/import_excel_seed.py --file /path/to/数据字典.xlsx [--dry-run]
+Excel 与源库同步是平级的两路输入来源：导入只做原文留档（excel_field_doc，
+按文件名幂等）与枚举字典入库，不写字段级标注；随后在工作台「重新聚类」
+按字段名取两路并集生成候选标准定义。
 
-导入遵循候选队列原则：字段描述写为 PENDING/IMPORT 标注（人工确认后生效，
-不覆盖已有 MANUAL/CONFIRMED 标注）；枚举字典按 code upsert（source_type=IMPORT）。
+    python scripts/import_excel_seed.py --file /path/to/数据字典.xlsx [--dry-run]
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from app.services.excel_import import (
 DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/datadict"
 
 
-async def run(db_url: str, data: bytes, *, dry_run: bool) -> None:
+async def run(db_url: str, data: bytes, *, source_file: str, dry_run: bool) -> None:
     sheets = load_sheets_from_fileobj(io.BytesIO(data))
     parsed = parse_workbook(sheets)
     print(f"sheets: {len(sheets)}")
@@ -44,22 +45,16 @@ async def run(db_url: str, data: bytes, *, dry_run: bool) -> None:
     engine = create_async_engine(db_url)
     async with async_sessionmaker(engine, expire_on_commit=False)() as session:
         async with session.begin():
-            report = await import_parsed_workbook(session, parsed)
+            report = await import_parsed_workbook(session, parsed, source_file=source_file)
     await engine.dispose()
 
     print("import report:")
-    print(f"  column_docs:                {report.column_docs}")
-    print(f"  matched_columns:            {report.matched_columns}")
-    print(f"  annotations_created:        {report.annotations_created} (PENDING/IMPORT)")
-    print(
-        f"  annotations_skipped:        {report.annotations_skipped_existing} (已有人工/已确认标注)"
-    )
-    print(f"  unmatched_docs:             {report.unmatched_docs}")
-    print(f"  dicts_imported:             {report.dicts_imported}")
-    if report.unmatched_tables:
-        preview = ", ".join(report.unmatched_tables[:10])
-        print(f"  unmatched tables (前10):    {preview}")
-        print("  提示：未匹配多因该表尚未同步进平台，接入对应数据源后重跑即可增量导入")
+    print(f"  column_docs:             {report.column_docs}")
+    print(f"  docs_stored:             {report.docs_stored} (excel_field_doc 留档)")
+    print(f"  distinct_tables:         {report.distinct_tables}")
+    print(f"  matched_synced_columns:  {report.matched_synced_columns} (与已同步字段重合，信息项)")
+    print(f"  dicts_imported:          {report.dicts_imported}")
+    print("  下一步：到标准定义工作台点「重新聚类」，Excel 文档与源库字段按字段名并集生成候选")
 
 
 def main() -> None:
@@ -68,8 +63,8 @@ def main() -> None:
     parser.add_argument("--db-url", default=DEFAULT_DB_URL)
     parser.add_argument("--dry-run", action="store_true", help="只解析不写库")
     args = parser.parse_args()
-    data = Path(args.file).read_bytes()
-    asyncio.run(run(args.db_url, data, dry_run=args.dry_run))
+    path = Path(args.file)
+    asyncio.run(run(args.db_url, path.read_bytes(), source_file=path.name, dry_run=args.dry_run))
 
 
 if __name__ == "__main__":
