@@ -5,9 +5,22 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class SimilarStandardOut(BaseModel):
+    """候选可能已被标准库覆盖的提示（按 名/别名/释义相似 命中）。"""
+
+    id: int
+    standard_name: str
+    raw_type: str | None = None
+    business_meaning: str | None = None
+    matched_by: str = Field(description="NAME=同名 / ALIAS=别名命中 / MEANING=释义相似")
+    score: float = 0.0
+
+
 class StandardFieldOut(BaseModel):
     id: int
     standard_name: str
+    cluster_key: str | None = None
+    merged_into_id: int | None = None
     business_meaning: str | None = None
     logical_type: str
     raw_type: str | None = None
@@ -18,6 +31,7 @@ class StandardFieldOut(BaseModel):
     candidate_count: int
     doc_count: int = 0
     version: int
+    similar_standards: list[SimilarStandardOut] = Field(default_factory=list)
 
 
 class StandardFieldItemOut(BaseModel):
@@ -57,14 +71,22 @@ class GenerateCandidatesOut(BaseModel):
 
 
 class ConfirmStandardFieldPayload(BaseModel):
-    raw_type: str = Field(min_length=1, max_length=128, examples=["varchar(32)"])
+    standard_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="标准字段名，可改（如把 bill_code 组定版为 waybill_no）；留空表示沿用候选名",
+        examples=["waybill_no"],
+    )
+    raw_type: str = Field(min_length=1, max_length=128, examples=["varchar(16)"])
     logical_type: str = Field(min_length=1, max_length=32, examples=["STRING"])
     business_meaning: str = Field(min_length=1, examples=["运单号"])
 
     model_config = {
         "json_schema_extra": {
             "example": {
-                "raw_type": "varchar(32)",
+                "standard_name": "waybill_no",
+                "raw_type": "varchar(16)",
                 "logical_type": "STRING",
                 "business_meaning": "运单号",
             }

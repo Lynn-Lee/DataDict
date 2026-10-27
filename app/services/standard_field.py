@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import BigInteger, Text, column, delete, func, or_, select, values
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.type_mapper import normalize_column_type
@@ -26,6 +26,7 @@ from app.models.knowledge import (
 from app.models.metadata import ColumnMeta, TableMeta
 from app.schemas.standard_fields import (
     ConfirmStandardFieldPayload,
+    SimilarStandardOut,
     StandardFieldDetailOut,
     StandardFieldItemOut,
     StandardFieldLibraryOut,
@@ -196,17 +197,19 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
     doc_rows = await load_doc_rows(session, excluded)
     candidates = build_name_clusters(sync_rows, doc_rows)
 
+    # 按 cluster_key 匹配既有候选：标准可能被改名或合并，用来源字段名匹配才不会
+    # 在重新聚类时把同一批字段又产出一个新候选（标准库出现重复概念）。
     existing = await session.execute(
         select(StandardField).where(
-            StandardField.standard_name.in_([c.column_name for c in candidates] or [""])
+            StandardField.cluster_key.in_([c.column_name for c in candidates] or [""])
         )
     )
-    existing_by_name = {sf.standard_name: sf for sf in existing.scalars()}
+    existing_by_key = {sf.cluster_key: sf for sf in existing.scalars() if sf.cluster_key}
 
     for candidate in candidates:
-        current = existing_by_name.get(candidate.column_name)
-        if current is not None and current.status == "CONFIRMED":
-            # 定版结论不可被重新聚类覆盖，但证据计数是事实数据，保持最新
+        current = existing_by_key.get(candidate.column_name)
+        if current is not None and current.status in {"CONFIRMED", "MERGED"}:
+            # 定版/已合并的结论不可被重新聚类覆盖，但证据计数是事实数据，保持最新
             current.candidate_count = candidate.candidate_count
             current.doc_count = candidate.doc_count
             current.type_distribution = candidate.type_distribution
@@ -217,6 +220,7 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
         if current is None:
             standard = StandardField(
                 standard_name=candidate.column_name,
+                cluster_key=candidate.column_name,
                 business_meaning=candidate.suggested_meaning,
                 logical_type=candidate.recommended_logical_type or "UNKNOWN",
                 # 冲突组不给自动推荐类型，等人工裁决
@@ -272,6 +276,8 @@ def _to_out(sf: StandardField) -> StandardFieldOut:
     return StandardFieldOut(
         id=sf.id,
         standard_name=sf.standard_name,
+        cluster_key=sf.cluster_key,
+        merged_into_id=sf.merged_into_id,
         business_meaning=sf.business_meaning,
         logical_type=sf.logical_type,
         raw_type=sf.raw_type,
@@ -297,6 +303,9 @@ async def list_standard_fields(
     stmt = select(StandardField)
     if status_filter:
         stmt = stmt.where(StandardField.status == status_filter)
+    else:
+        # 已合并的候选不再是独立条目，默认不列出
+        stmt = stmt.where(StandardField.status != "MERGED")
     if conflict_only:
         stmt = stmt.where(StandardField.has_conflict.is_(True))
     if q and q.strip():
@@ -315,7 +324,113 @@ async def list_standard_fields(
         .limit(page_size)
         .offset((page - 1) * page_size)
     )
-    return total, [_to_out(sf) for sf in rows.scalars()]
+    items = [_to_out(sf) for sf in rows.scalars()]
+    similar = await find_similar_standards(session, items)
+    for item in items:
+        item.similar_standards = similar.get(item.id, [])
+    return total, items
+
+
+# 释义相似度阈值：中文短文本 trigram 相似度天然偏低，但过低会把「订单编号 / 运单编号」
+# 这类仅共享后缀词的无关概念也提示出来。0.2 在真实数据上能留住 site_code→send_site_code
+# 这类真同义，滤掉共享词噪音；NAME/ALIAS 是强信号，不受此阈值影响。
+# 提示只是建议（用户一眼可否），漏提示才会产生重复标准，故阈值调整应偏保守。
+SIMILAR_MEANING_THRESHOLD = 0.2
+SIMILAR_TOP_N = 3
+
+
+async def find_similar_standards(
+    session: AsyncSession, candidates: list[StandardFieldOut]
+) -> dict[int, list[SimilarStandardOut]]:
+    """为候选找出标准库中可能已存在的同义标准。
+
+    三路信号，强弱依次：① 同名（NAME）② 命中已有标准的业务别名（ALIAS）
+    ③ 释义 pg_trgm 相似（MEANING）。目的是在用户确认前就告诉他
+    “这个概念标准库里已经有了”，避免定版出第二个同义标准。
+    """
+    drafts = [c for c in candidates if c.status == "DRAFT"]
+    if not drafts:
+        return {}
+
+    confirmed = (
+        (await session.execute(select(StandardField).where(StandardField.status == "CONFIRMED")))
+        .scalars()
+        .all()
+    )
+    if not confirmed:
+        return {}
+    by_id = {std.id: std for std in confirmed}
+    by_name = {std.standard_name.lower(): std for std in confirmed}
+
+    alias_rows = await session.execute(
+        select(Tag.name, AssetTagRel.urn)
+        .join(AssetTagRel, AssetTagRel.tag_id == Tag.id)
+        .where(Tag.category == STANDARD_TAG_CATEGORY)
+    )
+    alias_to_std: dict[str, StandardField] = {}
+    for alias, urn in alias_rows:
+        std = by_id.get(int(urn.split(":", 1)[1]))
+        if std is not None:
+            alias_to_std.setdefault(alias.lower(), std)
+
+    meaning_pairs = [(c.id, c.business_meaning) for c in drafts if c.business_meaning]
+    sim_by_candidate: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    if meaning_pairs:
+        cand = values(column("cid", BigInteger), column("meaning", Text), name="cand").data(
+            meaning_pairs
+        )
+        score = func.similarity(StandardField.business_meaning, cand.c.meaning)
+        rows = await session.execute(
+            select(cand.c.cid, StandardField.id, score.label("score"))
+            .select_from(cand, StandardField)
+            .where(
+                StandardField.status == "CONFIRMED",
+                StandardField.business_meaning.is_not(None),
+                score >= SIMILAR_MEANING_THRESHOLD,
+            )
+            .order_by(cand.c.cid, score.desc())
+        )
+        for cid, sid, sim_score in rows:
+            sim_by_candidate[int(cid)].append((int(sid), float(sim_score)))
+
+    result: dict[int, list[SimilarStandardOut]] = {}
+    for candidate in drafts:
+        keys = {candidate.standard_name.lower()}
+        if candidate.cluster_key:
+            keys.add(candidate.cluster_key.lower())
+
+        picked: dict[int, SimilarStandardOut] = {}
+        for key in keys:
+            if key in by_name:
+                std = by_name[key]
+                picked[std.id] = _similar(std, "NAME", 1.0)
+            if key in alias_to_std:
+                std = alias_to_std[key]
+                picked.setdefault(std.id, _similar(std, "ALIAS", 1.0))
+        for sid, sim_score in sim_by_candidate.get(candidate.id, []):
+            if sid in picked:
+                continue
+            std = by_id[sid]
+            picked[sid] = _similar(std, "MEANING", round(sim_score, 3))
+
+        ordered = sorted(
+            picked.values(),
+            key=lambda s: (0 if s.matched_by in {"NAME", "ALIAS"} else 1, -s.score),
+        )
+        if ordered:
+            result[candidate.id] = ordered[:SIMILAR_TOP_N]
+    return result
+
+
+def _similar(std: StandardField, matched_by: str, score: float) -> SimilarStandardOut:
+    return SimilarStandardOut(
+        id=std.id,
+        standard_name=std.standard_name,
+        raw_type=std.raw_type,
+        business_meaning=std.business_meaning,
+        matched_by=matched_by,
+        score=score,
+    )
 
 
 async def get_standard_field_detail(
@@ -364,13 +479,50 @@ async def confirm_standard_field(
     *,
     operator_id: int | None = None,
 ) -> StandardFieldOut:
-    """人工确认定版：写入最终推荐类型与释义，并回算存量字段 conforms。"""
+    """人工确认定版：字段名/类型/长度/释义均可改，并回算存量字段 conforms。
+
+    标准名可以被改（例如把 bill_code 组定版为 waybill_no）；若改名后与库中已有
+    的活跃标准重名，说明这是同一个概念，返回 409 并给出目标标准，由调用方改走
+    合并（merge_standard_field），避免标准库出现两个同义标准。
+
+    conforms 口径 = 字段名与类型**都**符合标准（标准叫 waybill_no varchar(16)，
+    存量叫 bill_code varchar(32) 即为不符合），这样符合率才反映真实治理进度。
+    """
     sf = await session.get(StandardField, standard_id)
     if sf is None:
         raise NotFoundError("标准字段定义不存在", detail={"id": standard_id})
     if sf.status != "DRAFT":
         raise ConflictError("该标准定义已定版或已废弃，不能重复确认", detail={"status": sf.status})
 
+    new_name = (payload.standard_name or sf.standard_name).strip()
+    if not new_name:
+        raise DataDictError("标准字段名不能为空")
+    if new_name != sf.standard_name:
+        clash = (
+            (
+                await session.execute(
+                    select(StandardField).where(
+                        StandardField.standard_name == new_name,
+                        StandardField.status.in_(["DRAFT", "CONFIRMED"]),
+                        StandardField.id != sf.id,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if clash is not None:
+            raise ConflictError(
+                f"标准库已存在「{new_name}」，同一概念只应有一个标准，请改为关联到该标准",
+                detail={
+                    "existing_id": clash.id,
+                    "existing_name": clash.standard_name,
+                    "existing_raw_type": clash.raw_type,
+                    "existing_status": clash.status,
+                },
+            )
+
+    sf.standard_name = new_name
     sf.raw_type = payload.raw_type
     sf.logical_type = payload.logical_type
     sf.business_meaning = payload.business_meaning
@@ -379,6 +531,13 @@ async def confirm_standard_field(
     sf.confirmed_by = operator_id
     sf.confirmed_at = datetime.now(UTC)
 
+    await recompute_conforms(session, sf)
+    await session.flush()
+    return _to_out(sf)
+
+
+async def recompute_conforms(session: AsyncSession, sf: StandardField) -> int:
+    """按「字段名 + 类型都一致」回算组内存量字段的 conforms，返回不符合数。"""
     items = (
         (
             await session.execute(
@@ -388,17 +547,91 @@ async def confirm_standard_field(
         .scalars()
         .all()
     )
-    if items:
-        urns = [item.column_urn for item in items]
-        col_rows = await session.execute(
-            select(ColumnMeta.urn, ColumnMeta.raw_type).where(ColumnMeta.urn.in_(urns))
+    if not items:
+        return 0
+    urns = [item.column_urn for item in items]
+    col_rows = await session.execute(
+        select(ColumnMeta.urn, ColumnMeta.column_name, ColumnMeta.raw_type).where(
+            ColumnMeta.urn.in_(urns)
         )
-        raw_by_urn = dict(col_rows.all())
-        for item in items:
-            item.conforms = raw_by_urn.get(item.column_urn) == payload.raw_type
+    )
+    cols = {urn: (name, raw_type) for urn, name, raw_type in col_rows}
+    deviating = 0
+    for item in items:
+        found = cols.get(item.column_urn)
+        item.conforms = bool(found and found[0] == sf.standard_name and found[1] == sf.raw_type)
+        if not item.conforms:
+            deviating += 1
+    return deviating
 
+
+async def merge_standard_field(
+    session: AsyncSession,
+    source_id: int,
+    target_id: int,
+    *,
+    operator_id: int | None = None,
+) -> StandardFieldOut:
+    """把候选合并进已有的同义标准（不产生第二个标准）。
+
+    - 候选的存量字段关联迁到目标标准下，重复的跳过
+    - 候选置 MERGED 并记录 merged_into_id
+    - 候选的来源字段名记为目标的业务别名标签，供后续同步按别名拦截新增违规
+    - 目标的 conforms 按「名 + 型」重算（迁进来的异名字段自然标记为不符合）
+
+    目标可以是已定版标准（常见：bill_code 组关联进 waybill_no 标准），也可以是
+    另一个待确认候选（同义候选先归并再一起定版）；已合并/已废弃的不能作目标。
+    """
+    if source_id == target_id:
+        raise DataDictError("不能合并到自身")
+    source = await session.get(StandardField, source_id)
+    target = await session.get(StandardField, target_id)
+    if source is None or target is None:
+        raise NotFoundError("标准字段定义不存在", detail={"source": source_id, "target": target_id})
+    if target.status in {"MERGED", "DEPRECATED"}:
+        raise ConflictError(
+            "目标标准已合并或已废弃，不能作为合并目标", detail={"target_status": target.status}
+        )
+    if source.status == "MERGED":
+        raise ConflictError("该候选已合并过", detail={"merged_into_id": source.merged_into_id})
+
+    existing_urns = set(
+        (
+            await session.execute(
+                select(StandardFieldItem.column_urn).where(
+                    StandardFieldItem.standard_field_id == target.id
+                )
+            )
+        ).scalars()
+    )
+    moved = (
+        (
+            await session.execute(
+                select(StandardFieldItem).where(StandardFieldItem.standard_field_id == source.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for item in moved:
+        if item.column_urn in existing_urns:
+            await session.delete(item)
+            continue
+        item.standard_field_id = target.id
+        existing_urns.add(item.column_urn)
+
+    alias = source.cluster_key or source.standard_name
+    source.status = "MERGED"
+    source.merged_into_id = target.id
     await session.flush()
-    return _to_out(sf)
+
+    if alias and alias != target.standard_name:
+        await attach_tag(session, target.id, alias, operator_id=operator_id)
+
+    target.candidate_count = len(existing_urns)
+    await recompute_conforms(session, target)
+    await session.flush()
+    return _to_out(target)
 
 
 async def _load_tags(

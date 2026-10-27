@@ -158,16 +158,23 @@ class CommonColumnBlacklist(Base):
 
 
 class StandardField(Base):
-    """标准字段定义（字段统一治理的核心实体）。
+    """标准字段定义（字段统一治理的核心实体，也是业务含义的唯一真相源）。
 
     生命周期：CLUSTER/IMPORT/MANUAL 生成 DRAFT 候选 → 人工确认 CONFIRMED →
-    废弃 DEPRECATED。has_conflict 表示组内类型冲突，必须人工裁决后才能定版。
+    废弃 DEPRECATED；若确认时发现标准库已有同义标准，则本候选 MERGED 进目标
+    标准（存量字段迁到目标下，原字段名记为目标的业务别名），不产生第二个标准。
+
+    has_conflict 表示组内类型冲突，必须人工裁决后才能定版。
+    cluster_key 是候选来源字段名——标准可被改名，聚类按 cluster_key 匹配，
+    避免改名后重新聚类又产出同一批字段的重复候选。
     """
 
     __tablename__ = "standard_field"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     standard_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    cluster_key: Mapped[str | None] = mapped_column(String(128))
+    merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("standard_field.id"))
     business_meaning: Mapped[str | None]
     logical_type: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_type: Mapped[str | None] = mapped_column(String(128))

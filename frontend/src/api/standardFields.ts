@@ -4,9 +4,20 @@ import type { MetadataPage } from "@/api/tables";
 // 标准字段定义接口，契约见后端 app/schemas/standard_fields.py。
 export type StandardFieldStatus = "DRAFT" | "CONFIRMED" | "DEPRECATED";
 
+export interface SimilarStandard {
+  id: number;
+  standard_name: string;
+  raw_type: string | null;
+  business_meaning: string | null;
+  matched_by: "NAME" | "ALIAS" | "MEANING";
+  score: number;
+}
+
 export interface StandardField {
   id: number;
   standard_name: string;
+  cluster_key: string | null;
+  merged_into_id: number | null;
   business_meaning: string | null;
   logical_type: string;
   raw_type: string | null;
@@ -17,6 +28,7 @@ export interface StandardField {
   candidate_count: number;
   doc_count: number;
   version: number;
+  similar_standards: SimilarStandard[];
 }
 
 export interface StandardFieldItem {
@@ -41,6 +53,7 @@ export interface GenerateSummary {
 }
 
 export interface ConfirmPayload {
+  standard_name?: string;
   raw_type: string;
   logical_type: string;
   business_meaning: string;
@@ -81,6 +94,14 @@ export function confirmStandardField(id: number, payload: ConfirmPayload): Promi
 
 export function generateStandardFields(): Promise<GenerateSummary> {
   return apiRequest<GenerateSummary>("/standard-fields/generate", { method: "POST" });
+}
+
+// 关联（合并）到已有标准：候选的存量字段迁到目标下，候选置 MERGED，
+// 来源字段名记为目标的业务别名。用于避免标准库出现两个同义标准。
+export function mergeStandardField(sourceId: number, targetId: number): Promise<StandardField> {
+  return apiRequest<StandardField>(`/standard-fields/${sourceId}/merge-into/${targetId}`, {
+    method: "POST",
+  });
 }
 
 // ── 终版标准定义库（含业务标签） ──

@@ -51,3 +51,17 @@ def test_attach_tag_rejects_empty_name_before_db_access() -> None:
     response = _client().post("/standard-fields/1/tags", json={"name": ""})
 
     assert response.status_code == 422
+
+
+def test_confirm_rejects_empty_standard_name_before_db_access() -> None:
+    response = _client().post(
+        "/standard-fields/1/confirm",
+        json={
+            "standard_name": "",
+            "raw_type": "varchar(16)",
+            "logical_type": "STRING",
+            "business_meaning": "运单号",
+        },
+    )
+
+    assert response.status_code == 422

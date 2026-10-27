@@ -88,9 +88,11 @@ async def list_standard_fields(
     response_model=StandardFieldOut,
     summary="确认定版标准定义",
     description=(
-        "人工确认候选为标准定义：写入最终类型与释义，状态 DRAFT→CONFIRMED，"
-        "并对组内存量字段回算 conforms（类型与定版一致为符合）。"
+        "人工确认候选为标准定义：标准字段名、类型（含长度）、逻辑类型、释义均可修改，"
+        "状态 DRAFT→CONFIRMED，并按「字段名 + 类型都一致」回算组内存量字段的 conforms。"
         "冲突候选必须显式给出裁决后的 raw_type/logical_type。"
+        "若改名后与库中已有活跃标准重名，返回 409 并给出该标准，应改走 merge-into 关联，"
+        "避免标准库出现两个同义标准。"
     ),
 )
 async def confirm_standard_field(
@@ -165,6 +167,27 @@ async def detach_standard_field_tag(
     tags = await service.detach_tag(session, standard_id, tag_id)
     await session.commit()
     return tags
+
+
+@router.post(
+    "/{standard_id}/merge-into/{target_id}",
+    response_model=StandardFieldOut,
+    summary="关联（合并）到已有标准",
+    description=(
+        "候选与标准库中已有条目是同一概念时使用：存量字段关联迁到目标下并按"
+        "「名 + 型」重算 conforms，候选置 MERGED，来源字段名记为目标的业务别名"
+        "（后续同步可据此拦截新增的异名违规字段）。标准库因此不会出现两个同义标准。"
+        "目标可以是已定版标准，也可以是另一个待确认候选（同义候选先归并再一起定版）。"
+    ),
+)
+async def merge_standard_field(
+    standard_id: int,
+    target_id: int,
+    session: Annotated[AsyncSession, Depends(get_web_session)],
+) -> StandardFieldOut:
+    out = await service.merge_standard_field(session, standard_id, target_id)
+    await session.commit()
+    return out
 
 
 @router.get(

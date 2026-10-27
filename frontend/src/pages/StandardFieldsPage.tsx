@@ -2,25 +2,30 @@ import { ReloadOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
+  AutoComplete,
   Button,
   Card,
   Input,
   Modal,
-  Radio,
   Segmented,
+  Select,
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useMemo, useState } from "react";
 
+import { ApiError } from "@/api/client";
 import {
   confirmStandardField,
   generateStandardFields,
   listStandardFields,
+  mergeStandardField,
+  type SimilarStandard,
   type StandardField,
 } from "@/api/standardFields";
 import { EmptyState, ErrorState } from "@/components/QueryStates";
@@ -51,6 +56,26 @@ function inferLogicalType(rawType: string, fallback: string): string {
   if (/^(json|jsonb)/.test(t)) return "JSON";
   return fallback;
 }
+
+const LOGICAL_TYPE_OPTIONS = [
+  "STRING",
+  "INT",
+  "DECIMAL",
+  "FLOAT",
+  "DATETIME",
+  "DATE",
+  "TIME",
+  "BOOL",
+  "JSON",
+  "BINARY",
+  "UNKNOWN",
+].map((value) => ({ value, label: value }));
+
+const MATCHED_BY_LABEL: Record<SimilarStandard["matched_by"], string> = {
+  NAME: "同名",
+  ALIAS: "别名命中",
+  MEANING: "释义相似",
+};
 
 function distributionEntries(row: StandardField): [string, number][] {
   return Object.entries(row.type_distribution ?? {}).sort((a, b) => b[1] - a[1]);
@@ -101,49 +126,106 @@ export default function StandardFieldsPage() {
     onError: () => message.error("聚类生成失败，请稍后重试"),
   });
 
-  // ── 确认定版弹窗 ──
+  // ── 确认定版弹窗（标准名/类型/长度/逻辑类型/释义全部可改） ──
   const [confirmTarget, setConfirmTarget] = useState<StandardField | null>(null);
+  const [standardName, setStandardName] = useState("");
   const [selectedType, setSelectedType] = useState("");
+  const [logicalType, setLogicalType] = useState("");
   const [meaning, setMeaning] = useState("");
+  // 改名撞上已有标准时后端返回 409 + existing_id，转为「关联到已有标准」引导
+  const [nameClash, setNameClash] = useState<{ id: number; name: string } | null>(null);
 
   const openConfirm = (row: StandardField) => {
     const entries = distributionEntries(row);
+    const type = row.raw_type ?? entries[0]?.[0] ?? "";
     setConfirmTarget(row);
-    setSelectedType(row.raw_type ?? entries[0]?.[0] ?? "");
+    setStandardName(row.standard_name);
+    setSelectedType(type);
+    setLogicalType(type ? inferLogicalType(type, row.logical_type) : row.logical_type);
     setMeaning(row.business_meaning ?? "");
+    setNameClash(null);
   };
 
+  // ── 关联（合并）到已有标准 ──
+  const [mergeTarget, setMergeTarget] = useState<{
+    source: StandardField;
+    targetId: number;
+    targetName: string;
+  } | null>(null);
+
+  const invalidateList = () => {
+    void queryClient.invalidateQueries({ queryKey: ["standard-fields"] });
+    void queryClient.invalidateQueries({ queryKey: ["standard-library"] });
+    void queryClient.invalidateQueries({ queryKey: ["standard-field-detail"] });
+  };
+
+  const mergeMutation = useMutation({
+    mutationFn: (vars: { sourceId: number; targetId: number }) =>
+      mergeStandardField(vars.sourceId, vars.targetId),
+    onSuccess: (target) => {
+      message.success(
+        `已关联到标准「${target.standard_name} ${target.raw_type}」，存量字段已迁移，原字段名记为业务别名`,
+      );
+      setMergeTarget(null);
+      setConfirmTarget(null);
+      setNameClash(null);
+      invalidateList();
+    },
+    onError: (err) => message.error(err instanceof Error ? err.message : "关联失败"),
+  });
+
   const confirmMutation = useMutation({
-    mutationFn: (vars: { id: number; rawType: string; meaning: string; fallback: string }) =>
+    mutationFn: (vars: { id: number; name: string; rawType: string; logical: string; meaning: string }) =>
       confirmStandardField(vars.id, {
+        standard_name: vars.name,
         raw_type: vars.rawType,
-        logical_type: inferLogicalType(vars.rawType, vars.fallback),
+        logical_type: vars.logical,
         business_meaning: vars.meaning,
       }),
     onSuccess: (confirmed) => {
       message.success(`已定版：${confirmed.standard_name} ${confirmed.raw_type}`);
       setConfirmTarget(null);
+      setNameClash(null);
       setDetailId(confirmed.id);
-      void queryClient.invalidateQueries({ queryKey: ["standard-fields"] });
+      invalidateList();
     },
-    onError: () => message.error("定版失败，请重试"),
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409 && typeof err.detail.existing_id === "number") {
+        setNameClash({
+          id: err.detail.existing_id as number,
+          name: String(err.detail.existing_name ?? standardName),
+        });
+        message.warning(err.message);
+        return;
+      }
+      message.error(err instanceof Error ? err.message : "定版失败，请重试");
+    },
   });
 
   const submitConfirm = () => {
     if (!confirmTarget) return;
+    if (!standardName.trim()) {
+      message.warning("标准字段名不能为空");
+      return;
+    }
+    if (!/^[a-z_][a-z0-9_]*$/.test(standardName.trim())) {
+      message.warning("标准字段名只能用小写字母、数字、下划线，且以字母或下划线开头");
+      return;
+    }
     if (!meaning.trim()) {
       message.warning("中文释义不能为空");
       return;
     }
-    if (!selectedType) {
-      message.warning("请选择标准类型");
+    if (!selectedType.trim()) {
+      message.warning("请填写标准类型（含长度，如 varchar(16)）");
       return;
     }
     confirmMutation.mutate({
       id: confirmTarget.id,
-      rawType: selectedType,
+      name: standardName.trim(),
+      rawType: selectedType.trim(),
+      logical: logicalType || inferLogicalType(selectedType.trim(), confirmTarget.logical_type),
       meaning: meaning.trim(),
-      fallback: confirmTarget.logical_type,
     });
   };
 
@@ -223,6 +305,45 @@ export default function StandardFieldsPage() {
         ellipsis: true,
         render: (value: string | null) =>
           value || <Typography.Text type="secondary">—</Typography.Text>,
+      },
+      {
+        title: "疑似已有标准",
+        key: "similar",
+        width: 240,
+        render: (_, row) =>
+          row.status !== "DRAFT" || row.similar_standards.length === 0 ? (
+            <Typography.Text type="secondary">—</Typography.Text>
+          ) : (
+            <Space direction="vertical" size={2}>
+              {row.similar_standards.map((similar) => (
+                <Space key={similar.id} size={4} wrap>
+                  <Tooltip
+                    title={`${MATCHED_BY_LABEL[similar.matched_by]}${
+                      similar.matched_by === "MEANING" ? ` ${similar.score}` : ""
+                    } · ${similar.business_meaning ?? ""}`}
+                  >
+                    <Tag color="purple" style={{ fontFamily: "monospace" }}>
+                      {similar.standard_name}
+                      {similar.raw_type ? ` ${similar.raw_type}` : ""}
+                    </Tag>
+                  </Tooltip>
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() =>
+                      setMergeTarget({
+                        source: row,
+                        targetId: similar.id,
+                        targetName: similar.standard_name,
+                      })
+                    }
+                  >
+                    关联
+                  </Button>
+                </Space>
+              ))}
+            </Space>
+          ),
       },
       {
         title: "状态",
@@ -327,7 +448,7 @@ export default function StandardFieldsPage() {
       <Modal
         title={
           confirmTarget
-            ? `确认标准定义 · ${confirmTarget.standard_name}`
+            ? `确认标准定义 · ${confirmTarget.cluster_key ?? confirmTarget.standard_name}`
             : "确认标准定义"
         }
         open={confirmTarget !== null}
@@ -336,15 +457,18 @@ export default function StandardFieldsPage() {
         okText="确认定版"
         cancelText="取消"
         confirmLoading={confirmMutation.isPending}
-        destroyOnClose
+        width={620}
+        destroyOnHidden
       >
         {confirmTarget && (
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Typography.Text type="secondary">
               证据来源：源库 {confirmTarget.candidate_count} 个字段
               {confirmTarget.doc_count > 0 && `，Excel 文档 ${confirmTarget.doc_count} 条`}。
-              定版后成为全公司唯一标准，存量字段将按类型一致性回算 conforms 标记。
+              名称、类型、长度、释义都可改；定版后按「字段名 + 类型都一致」回算存量字段的
+              conforms。
             </Typography.Text>
+
             {confirmTarget.has_conflict && (
               <Alert
                 type="warning"
@@ -352,25 +476,110 @@ export default function StandardFieldsPage() {
                 message="类型存在语义级冲突，系统不给自动推荐，必须人工裁决"
               />
             )}
+
+            {confirmTarget.similar_standards.length > 0 && (
+              <Alert
+                type="info"
+                showIcon
+                message="标准库中疑似已有同一概念的标准，建议直接关联而不是新建（否则会出现两个同义标准）"
+                description={
+                  <Space direction="vertical" size={4}>
+                    {confirmTarget.similar_standards.map((similar) => (
+                      <Space key={similar.id} size={6} wrap>
+                        <Tag color="purple" style={{ fontFamily: "monospace" }}>
+                          {similar.standard_name} {similar.raw_type}
+                        </Tag>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {similar.business_meaning} · {MATCHED_BY_LABEL[similar.matched_by]}
+                          {similar.matched_by === "MEANING" ? ` ${similar.score}` : ""}
+                        </Typography.Text>
+                        <Button
+                          type="link"
+                          size="small"
+                          onClick={() =>
+                            setMergeTarget({
+                              source: confirmTarget,
+                              targetId: similar.id,
+                              targetName: similar.standard_name,
+                            })
+                          }
+                        >
+                          关联到该标准
+                        </Button>
+                      </Space>
+                    ))}
+                  </Space>
+                }
+              />
+            )}
+
+            {nameClash && (
+              <Alert
+                type="error"
+                showIcon
+                message={`标准库已存在「${nameClash.name}」，同一概念只应有一个标准`}
+                description={
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={() =>
+                      setMergeTarget({
+                        source: confirmTarget,
+                        targetId: nameClash.id,
+                        targetName: nameClash.name,
+                      })
+                    }
+                  >
+                    改为关联到「{nameClash.name}」
+                  </Button>
+                }
+              />
+            )}
+
             <div>
-              <Typography.Text strong>标准类型</Typography.Text>
-              <Radio.Group
-                style={{ display: "block", marginTop: 8 }}
-                value={selectedType}
-                onChange={(event) => setSelectedType(event.target.value as string)}
-              >
-                <Space direction="vertical">
-                  {distributionEntries(confirmTarget).map(([type, count]) => (
-                    <Radio key={type} value={type}>
-                      <Typography.Text code>{type}</Typography.Text>
-                      <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                        ×{count} 张表{count === Math.max(...distributionEntries(confirmTarget).map(([, c]) => c)) ? " · 众数" : ""}
-                      </Typography.Text>
-                    </Radio>
-                  ))}
-                </Space>
-              </Radio.Group>
+              <Typography.Text strong>标准字段名</Typography.Text>
+              <Input
+                style={{ marginTop: 8, fontFamily: "monospace" }}
+                value={standardName}
+                onChange={(event) => setStandardName(event.target.value)}
+                placeholder="如：waybill_no（小写字母/数字/下划线）"
+              />
+              {confirmTarget.cluster_key && confirmTarget.cluster_key !== standardName && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  候选来源字段名 {confirmTarget.cluster_key} 将自动记为该标准的业务别名
+                </Typography.Text>
+              )}
             </div>
+
+            <Space size="middle" wrap>
+              <div style={{ minWidth: 220 }}>
+                <Typography.Text strong>标准类型（含长度，可自由填写）</Typography.Text>
+                <AutoComplete
+                  style={{ width: 220, marginTop: 8, fontFamily: "monospace" }}
+                  value={selectedType}
+                  onChange={(value) => {
+                    setSelectedType(value);
+                    setLogicalType(inferLogicalType(value, confirmTarget.logical_type));
+                  }}
+                  options={distributionEntries(confirmTarget).map(([type, count]) => ({
+                    value: type,
+                    label: `${type}（实际出现 ${count} 次）`,
+                  }))}
+                  placeholder="如：varchar(16)"
+                />
+              </div>
+              <div style={{ minWidth: 140 }}>
+                <Typography.Text strong>逻辑类型</Typography.Text>
+                <Select
+                  style={{ width: 140, marginTop: 8 }}
+                  value={logicalType || undefined}
+                  onChange={setLogicalType}
+                  options={LOGICAL_TYPE_OPTIONS}
+                  placeholder="随类型自动推导"
+                />
+              </div>
+            </Space>
+
             <div>
               <Typography.Text strong>中文释义 / 业务含义</Typography.Text>
               <Input.TextArea
@@ -378,9 +587,39 @@ export default function StandardFieldsPage() {
                 rows={2}
                 value={meaning}
                 onChange={(event) => setMeaning(event.target.value)}
-                placeholder="如：运单号"
+                placeholder="如：运单号，全局唯一"
               />
             </div>
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title="关联到已有标准"
+        open={mergeTarget !== null}
+        onCancel={() => setMergeTarget(null)}
+        onOk={() =>
+          mergeTarget &&
+          mergeMutation.mutate({ sourceId: mergeTarget.source.id, targetId: mergeTarget.targetId })
+        }
+        okText="确认关联"
+        cancelText="取消"
+        confirmLoading={mergeMutation.isPending}
+        destroyOnHidden
+      >
+        {mergeTarget && (
+          <Space direction="vertical" size="small">
+            <Typography.Text>
+              候选「{mergeTarget.source.cluster_key ?? mergeTarget.source.standard_name}」的
+              {mergeTarget.source.candidate_count > 0
+                ? ` ${mergeTarget.source.candidate_count} 个存量字段将关联到标准「${mergeTarget.targetName}」`
+                : "证据将并入标准"}
+              ，本候选不再作为独立标准（标记为已合并）。
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              原字段名会记为目标标准的业务别名；存量字段中名称或类型与标准不一致的，
+              会标记为「不符合」并进入治理度量。
+            </Typography.Text>
           </Space>
         )}
       </Modal>

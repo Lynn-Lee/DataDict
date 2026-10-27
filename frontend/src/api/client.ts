@@ -20,12 +20,19 @@ export function setToken(token: string | null): void {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly detail: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    detail: Record<string, unknown> = {},
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -74,14 +81,20 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (!response.ok) {
     let code = `HTTP-${response.status}`;
     let message = response.statusText;
+    let detail: Record<string, unknown> = {};
     try {
-      const payload = (await response.json()) as { code?: string; message?: string };
+      const payload = (await response.json()) as {
+        code?: string;
+        message?: string;
+        detail?: Record<string, unknown>;
+      };
       code = payload.code ?? code;
       message = payload.message ?? message;
+      detail = payload.detail ?? {};
     } catch {
       // 非 JSON 错误体，保留状态码信息
     }
-    throw new ApiError(response.status, code, message);
+    throw new ApiError(response.status, code, message, detail);
   }
 
   if (response.status === 204) {
