@@ -27,6 +27,10 @@ collectors-full = [
     "oracledb>=2.5",
     "pymssql>=2.3",
 ]
+# Excel 历史数据字典种子导入（T-S5），仅脚本层使用
+excel = [
+    "openpyxl>=3.1",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
