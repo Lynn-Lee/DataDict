@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     datasources,
     governance,
     health,
+    imports,
     metadata_queries,
     standard_fields,
 )
@@ -18,6 +19,7 @@ api_router.include_router(metadata_queries.router)
 api_router.include_router(standard_fields.router)
 api_router.include_router(datasources.router)
 api_router.include_router(governance.router)
+api_router.include_router(imports.router)
 
 # 后续按 DEV-TASKS 逐步接入：
 #   V0.5  domains / tags / dicts / todos / changes

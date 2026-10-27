@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """导入历史数据字典 Excel 种子（T-S5）。
 
-解析逻辑在 app/services/excel_import.py（纯函数，可单测）；本脚本只负责
-用 openpyxl 读文件 + 连库执行导入。依赖：uv pip install -e ".[excel]"
+解析逻辑在 app/services/excel_import.py（纯函数，可单测）；Web 上传导入见
+POST /api/v1/imports/excel（同一套服务）。本脚本供运维批量/离线场景使用。
 
     python scripts/import_excel_seed.py --file /path/to/数据字典.xlsx [--dry-run]
 
@@ -14,28 +14,22 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from typing import Any
+import io
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.services.excel_import import import_parsed_workbook, parse_workbook
+from app.services.excel_import import (
+    import_parsed_workbook,
+    load_sheets_from_fileobj,
+    parse_workbook,
+)
 
 DEFAULT_DB_URL = "postgresql+asyncpg://postgres:postgres@localhost:15432/datadict"
 
 
-def load_sheets(path: str) -> dict[str, list[list[Any]]]:
-    import openpyxl  # type: ignore[import-untyped]  # 延迟导入：仅脚本层依赖 excel extra
-
-    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    sheets: dict[str, list[list[Any]]] = {}
-    for name in workbook.sheetnames:
-        worksheet = workbook[name]
-        sheets[name] = [list(row) for row in worksheet.iter_rows(values_only=True)]
-    return sheets
-
-
-async def run(db_url: str, path: str, *, dry_run: bool) -> None:
-    sheets = load_sheets(path)
+async def run(db_url: str, data: bytes, *, dry_run: bool) -> None:
+    sheets = load_sheets_from_fileobj(io.BytesIO(data))
     parsed = parse_workbook(sheets)
     print(f"sheets: {len(sheets)}")
     print(f"parsed: column_docs={len(parsed.columns)} dicts={len(parsed.dicts)}")
@@ -74,7 +68,8 @@ def main() -> None:
     parser.add_argument("--db-url", default=DEFAULT_DB_URL)
     parser.add_argument("--dry-run", action="store_true", help="只解析不写库")
     args = parser.parse_args()
-    asyncio.run(run(args.db_url, args.file, dry_run=args.dry_run))
+    data = Path(args.file).read_bytes()
+    asyncio.run(run(args.db_url, data, dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

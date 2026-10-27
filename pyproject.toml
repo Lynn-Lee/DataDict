@@ -19,6 +19,10 @@ dependencies = [
     "apscheduler>=3.11",
     # 采集器驱动：V0.1 只需 MySQL（PostgreSQL 复用 asyncpg）
     "pymysql>=1.1",
+    # Excel 种子导入（T-S5：Web 上传 + 脚本）
+    "openpyxl>=3.1",
+    # FastAPI multipart 文件上传依赖
+    "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]
@@ -26,10 +30,6 @@ dependencies = [
 collectors-full = [
     "oracledb>=2.5",
     "pymssql>=2.3",
-]
-# Excel 历史数据字典种子导入（T-S5），仅脚本层使用
-excel = [
-    "openpyxl>=3.1",
 ]
 dev = [
     "pytest>=8.3",

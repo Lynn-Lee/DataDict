@@ -16,7 +16,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, BinaryIO
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -65,6 +65,21 @@ class ExcelImportReport:
     unmatched_docs: int = 0
     dicts_imported: int = 0
     unmatched_tables: list[str] = field(default_factory=list)
+
+
+def load_sheets_from_fileobj(fh: BinaryIO) -> dict[str, list[list[Any]]]:
+    """从文件对象读取 xlsx 全部 sheet 的行值。
+
+    openpyxl 延迟导入：解析与导入逻辑本身不依赖它，便于单测。
+    """
+    import openpyxl  # type: ignore[import-untyped]
+
+    workbook = openpyxl.load_workbook(fh, read_only=True, data_only=True)
+    sheets: dict[str, list[list[Any]]] = {}
+    for name in workbook.sheetnames:
+        worksheet = workbook[name]
+        sheets[name] = [list(row) for row in worksheet.iter_rows(values_only=True)]
+    return sheets
 
 
 def _text(value: Any) -> str:

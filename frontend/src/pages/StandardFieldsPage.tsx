@@ -24,6 +24,7 @@ import {
   type StandardField,
 } from "@/api/standardFields";
 import { EmptyState, ErrorState } from "@/components/QueryStates";
+import ExcelImportCard from "@/components/ExcelImportCard";
 import StandardFieldDrawer from "@/components/StandardFieldDrawer";
 
 const PAGE_SIZE = 20;
@@ -277,6 +278,8 @@ export default function StandardFieldsPage() {
           showIcon
           message="治理闭环：同步存量字段 → 同名聚类生成候选 → 人工确认定版 → API / MCP 供 AI 建表查询；status、type 等黑名单通用字段名已排除，需逐表人工归组。"
         />
+
+        <ExcelImportCard />
 
         {listQuery.isError ? (
           <ErrorState

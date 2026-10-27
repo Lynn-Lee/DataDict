@@ -49,7 +49,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   const headers: Record<string, string> = {};
-  if (body !== undefined) {
+  // FormData（文件上传）不设 Content-Type，交给浏览器带 boundary
+  if (body !== undefined && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
   if (auth) {
@@ -62,7 +63,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const response = await fetch(url.toString(), {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : body instanceof FormData
+          ? body
+          : JSON.stringify(body),
   });
 
   if (!response.ok) {
