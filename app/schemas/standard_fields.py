@@ -20,6 +20,8 @@ class StandardFieldOut(BaseModel):
     id: int
     standard_name: str
     cluster_key: str | None = None
+    # 非空表示该标准是按释义拆出来的通用字段名分组（status 运单状态 vs 工单状态）
+    sub_key: str = ""
     merged_into_id: int | None = None
     business_meaning: str | None = None
     logical_type: str

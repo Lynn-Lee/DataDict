@@ -1,10 +1,13 @@
-"""标准字段定义：同名聚类候选生成（字段统一治理 T-S2）。
+"""标准字段定义：同名聚类候选生成（字段统一治理 T-S2 / T-S11）。
 
 治理路径：存量字段原样同步 → 按字段名聚类产出候选标准定义（零标注成本）→
 人工确认定版 → 对外提供设计态查询。同名字段在多数系统中本来就叫法一致，
 字段名即最强的语义先验；同名不同型自动标记冲突，强制人工裁决。
+通用字段名（status/type 等）同名不同义，不按名整体聚，而按「字段名 + 释义」
+拆成多组候选，让它们也能各自定版，而不是被排除在标准库之外。
 """
 
+import hashlib
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -45,7 +48,11 @@ def _standard_tag_urn(standard_id: int) -> str:
 
 @dataclass
 class ClusterCandidate:
-    """单个字段名聚合出的候选标准定义（源库 + Excel 文档两路并集）。"""
+    """一个候选标准定义分组。
+
+    普通字段名按名字聚（sub_key=''）；通用字段名（status/type 等同名不同义）
+    按「字段名 + 释义」聚，sub_key 存该组释义哈希。
+    """
 
     column_name: str
     candidate_count: int
@@ -56,6 +63,7 @@ class ClusterCandidate:
     suggested_meaning: str | None
     column_urns: list[str] = field(default_factory=list)
     doc_count: int = 0
+    sub_key: str = ""
 
 
 @dataclass
@@ -66,64 +74,85 @@ class ClusteringSummary:
     skipped_conflict: int = 0
 
 
+def normalize_meaning(text_value: str | None) -> str:
+    """释义分组用的归一：合并空白、去尾部标点、转小写。
+
+    只做「同一句话的写法差异」的归一（空格、句号、冒号），不做语义归一：
+    「运单状态」和「订单状态」仍是两组，交由人工裁决或合并。
+    """
+    if not text_value:
+        return ""
+    collapsed = " ".join(text_value.split())
+    return collapsed.rstrip("。.;；,，:：").lower()
+
+
+def meaning_key(text_value: str | None) -> str:
+    """释义分组哈希。空释义用固定占位，保证与任何有释义的组不同桶。"""
+    normalized = normalize_meaning(text_value)
+    payload = normalized if normalized else "∅无释义"
+    # blake2b 仅作分组键（非安全用途），比 md5 短且不会被安全类 lint 拦
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=8).hexdigest()[:12]
+
+
 def build_name_clusters(
     sync_rows: Iterable[tuple[str, str, str, str | None, str | None]],
     doc_rows: Iterable[tuple[str, str | None, str | None]] = (),
     *,
-    excluded_names: set[str] | None = None,
+    split_names: Iterable[str] = (),
 ) -> list[ClusterCandidate]:
-    """按字段名聚合两路来源，产出候选标准定义。
+    """按字段名（通用名再按释义）聚合源库与 Excel 两路证据，产出候选标准定义。
 
     - `sync_rows`：(column_name, urn, raw_type, logical_type, raw_comment)，源库实际用法
     - `doc_rows`：(column_name, column_type, column_desc)，Excel 历史文档
+    - `split_names`：同名不同义风险的通用字段名（黑名单）。这些名字**不再被排除**，
+      而是按「字段名 + 释义」分组，让 `status`(运单状态) 与 `status`(工单状态)
+      各自成为独立候选——否则这些字段永远进不了标准库。
 
-    两路是**并集**关系：只在一路出现的字段名同样产出候选（Excel 里有、源库还没同步的
-    字段可以先定标准）。推荐规则：类型取合并后的众数；逻辑类型不一致 → has_conflict
-    强制人工裁决；释义取两路中最高频的非空描述，仅作确认时的预填。
+    两路证据是并集关系：只在一路出现的字段名同样产候选。推荐规则：类型取合并后
+    众数；逻辑类型不一致 → has_conflict 强制人工裁决；释义取组内最高频描述。
     """
-    excluded = excluded_names or set()
-    types: dict[str, Counter[str]] = defaultdict(Counter)
-    logicals: dict[str, Counter[str]] = defaultdict(Counter)
-    meanings: dict[str, Counter[str]] = defaultdict(Counter)
-    urns: dict[str, list[str]] = defaultdict(list)
-    doc_counts: dict[str, int] = defaultdict(int)
+    split = set(split_names)
+    types: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    logicals: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    meanings: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    urns: dict[tuple[str, str], list[str]] = defaultdict(list)
+    doc_counts: dict[tuple[str, str], int] = defaultdict(int)
 
     for column_name, urn, raw_type, logical_type, raw_comment in sync_rows:
-        if column_name in excluded:
-            continue
-        types[column_name][raw_type] += 1
+        key = (column_name, meaning_key(raw_comment) if column_name in split else "")
+        types[key][raw_type] += 1
         if logical_type:
-            logicals[column_name][logical_type] += 1
+            logicals[key][logical_type] += 1
         if raw_comment and raw_comment.strip():
-            meanings[column_name][raw_comment.strip()] += 1
-        urns[column_name].append(urn)
+            meanings[key][raw_comment.strip()] += 1
+        urns[key].append(urn)
 
     for column_name, column_type, column_desc in doc_rows:
-        if column_name in excluded:
-            continue
-        doc_counts[column_name] += 1
+        key = (column_name, meaning_key(column_desc) if column_name in split else "")
+        doc_counts[key] += 1
         if column_type and column_type.strip():
             # Excel 里存在全角括号写法（varchar（32）），归一后再计数，避免污染类型分布
             raw = column_type.strip().replace("（", "(").replace("）", ")")
-            types[column_name][raw] += 1
+            types[key][raw] += 1
             # Excel 未标明库类型，按 MySQL 方言归一（历史字典以 MySQL/TiDB 为主）
             normalized = normalize_column_type("mysql", raw)
             if normalized != "UNKNOWN":
-                logicals[column_name][normalized] += 1
+                logicals[key][normalized] += 1
         if column_desc and column_desc.strip():
-            meanings[column_name][column_desc.strip()] += 1
+            meanings[key][column_desc.strip()] += 1
 
     candidates: list[ClusterCandidate] = []
-    for column_name in set(types) | set(urns) | set(doc_counts):
-        type_counter = types[column_name]
-        logical_counter = logicals[column_name]
-        meaning_counter = meanings[column_name]
+    for column_name, sub_key in set(types) | set(urns) | set(doc_counts):
+        key = (column_name, sub_key)
+        type_counter = types[key]
+        logical_counter = logicals[key]
+        meaning_counter = meanings[key]
         top_raw = type_counter.most_common(1)[0][0] if type_counter else None
         top_logical = logical_counter.most_common(1)[0][0] if logical_counter else None
         candidates.append(
             ClusterCandidate(
                 column_name=column_name,
-                candidate_count=len(urns[column_name]),
+                candidate_count=len(urns[key]),
                 type_distribution=dict(sorted(type_counter.items(), key=lambda kv: -kv[1])),
                 recommended_logical_type=top_logical,
                 recommended_raw_type=top_raw,
@@ -131,16 +160,17 @@ def build_name_clusters(
                 suggested_meaning=(
                     meaning_counter.most_common(1)[0][0] if meaning_counter else None
                 ),
-                column_urns=list(urns[column_name]),
-                doc_count=doc_counts[column_name],
+                column_urns=list(urns[key]),
+                doc_count=doc_counts[key],
+                sub_key=sub_key,
             )
         )
     candidates.sort(key=lambda c: (-c.candidate_count, -c.doc_count))
     return candidates
 
 
-async def load_excluded_names(session: AsyncSession) -> set[str]:
-    """黑名单字段名：同名不同义风险高，不参与自动聚类。"""
+async def load_split_names(session: AsyncSession) -> set[str]:
+    """通用字段名黑名单：同名不同义风险高，聚类时按「字段名 + 释义」再分组。"""
     rows = await session.execute(
         select(CommonColumnBlacklist.column_name).where(
             CommonColumnBlacklist.is_whitelist.is_(False)
@@ -149,11 +179,8 @@ async def load_excluded_names(session: AsyncSession) -> set[str]:
     return {name for (name,) in rows}
 
 
-async def load_cluster_rows(
-    session: AsyncSession, excluded_names: set[str] | None = None
-) -> list[tuple[str, str, str, str, str | None]]:
+async def load_cluster_rows(session: AsyncSession) -> list[tuple[str, str, str, str, str | None]]:
     """源库侧聚类输入：未删除字段的 (字段名, urn, 原始类型, 逻辑类型, 注释)。"""
-    excluded = excluded_names if excluded_names is not None else await load_excluded_names(session)
     rows = await session.execute(
         select(
             ColumnMeta.column_name,
@@ -166,48 +193,42 @@ async def load_cluster_rows(
     return [
         (name, urn, raw_type, logical_type, comment)
         for name, urn, raw_type, logical_type, comment in rows
-        if name not in excluded
     ]
 
 
-async def load_doc_rows(
-    session: AsyncSession, excluded_names: set[str] | None = None
-) -> list[tuple[str, str | None, str | None]]:
+async def load_doc_rows(session: AsyncSession) -> list[tuple[str, str | None, str | None]]:
     """Excel 文档侧聚类输入：留档的 (字段名, 文档类型, 字段描述)。"""
-    excluded = excluded_names if excluded_names is not None else await load_excluded_names(session)
     rows = await session.execute(
         select(ExcelFieldDoc.column_name, ExcelFieldDoc.column_type, ExcelFieldDoc.column_desc)
     )
-    return [
-        (name, column_type, column_desc)
-        for name, column_type, column_desc in rows
-        if name not in excluded
-    ]
+    return [(name, column_type, column_desc) for name, column_type, column_desc in rows]
 
 
 async def generate_standard_field_candidates(session: AsyncSession) -> ClusteringSummary:
-    """按字段名聚类（源库 ∪ Excel 文档）生成/刷新 DRAFT 候选标准定义。
+    """按字段名（通用名再按释义）聚类，源库 ∪ Excel 文档，生成/刷新 DRAFT 候选。
 
     幂等可重跑：已有 DRAFT 候选更新统计并整体替换源字段关联；
     已 CONFIRMED 的同名标准不动（定版结论优先于重新聚类）。
     """
     summary = ClusteringSummary()
-    excluded = await load_excluded_names(session)
-    sync_rows = await load_cluster_rows(session, excluded)
-    doc_rows = await load_doc_rows(session, excluded)
-    candidates = build_name_clusters(sync_rows, doc_rows)
+    split_names = await load_split_names(session)
+    sync_rows = await load_cluster_rows(session)
+    doc_rows = await load_doc_rows(session)
+    candidates = build_name_clusters(sync_rows, doc_rows, split_names=split_names)
 
-    # 按 cluster_key 匹配既有候选：标准可能被改名或合并，用来源字段名匹配才不会
-    # 在重新聚类时把同一批字段又产出一个新候选（标准库出现重复概念）。
+    # 按 (cluster_key, sub_key) 匹配既有候选：标准可能被改名或合并，用来源字段名+
+    # 释义分组匹配才不会在重新聚类时把同一批字段又产出一个新候选（标准库出现重复概念）。
     existing = await session.execute(
         select(StandardField).where(
             StandardField.cluster_key.in_([c.column_name for c in candidates] or [""])
         )
     )
-    existing_by_key = {sf.cluster_key: sf for sf in existing.scalars() if sf.cluster_key}
+    existing_by_key = {
+        (sf.cluster_key, sf.sub_key): sf for sf in existing.scalars() if sf.cluster_key
+    }
 
     for candidate in candidates:
-        current = existing_by_key.get(candidate.column_name)
+        current = existing_by_key.get((candidate.column_name, candidate.sub_key))
         if current is not None and current.status in {"CONFIRMED", "MERGED"}:
             # 定版/已合并的结论不可被重新聚类覆盖，但证据计数是事实数据，保持最新
             current.candidate_count = candidate.candidate_count
@@ -221,6 +242,7 @@ async def generate_standard_field_candidates(session: AsyncSession) -> Clusterin
             standard = StandardField(
                 standard_name=candidate.column_name,
                 cluster_key=candidate.column_name,
+                sub_key=candidate.sub_key,
                 business_meaning=candidate.suggested_meaning,
                 logical_type=candidate.recommended_logical_type or "UNKNOWN",
                 # 冲突组不给自动推荐类型，等人工裁决
@@ -277,6 +299,7 @@ def _to_out(sf: StandardField) -> StandardFieldOut:
         id=sf.id,
         standard_name=sf.standard_name,
         cluster_key=sf.cluster_key,
+        sub_key=sf.sub_key,
         merged_into_id=sf.merged_into_id,
         business_meaning=sf.business_meaning,
         logical_type=sf.logical_type,
@@ -360,7 +383,9 @@ async def find_similar_standards(
     if not confirmed:
         return {}
     by_id = {std.id: std for std in confirmed}
-    by_name = {std.standard_name.lower(): std for std in confirmed}
+    # 同名即同概念的强信号只在「按字段名整体定标」的标准之间成立；释义拆组出来的标准
+    # 名字是 status/type 这类通用名，按名命中会把用户推向另一个同名不同义的概念。
+    by_name = {std.standard_name.lower(): std for std in confirmed if not std.sub_key}
 
     alias_rows = await session.execute(
         select(Tag.name, AssetTagRel.urn)
@@ -481,9 +506,12 @@ async def confirm_standard_field(
 ) -> StandardFieldOut:
     """人工确认定版：字段名/类型/长度/释义均可改，并回算存量字段 conforms。
 
-    标准名可以被改（例如把 bill_code 组定版为 waybill_no）；若改名后与库中已有
-    的活跃标准重名，说明这是同一个概念，返回 409 并给出目标标准，由调用方改走
+    标准名可以被改（例如把 bill_code 组定版为 waybill_no）；若改名后与库中已有的
+    活跃标准重名，说明这是同一个概念，返回 409 并给出目标标准，由调用方改走
     合并（merge_standard_field），避免标准库出现两个同义标准。
+
+    通用字段名（status/type 等）按释义拆组后，同名的不同释义组可以各自定版共存
+    （沿用来源名定版不算改名，不触发上面的重名拦截）。
 
     conforms 口径 = 字段名与类型**都**符合标准（标准叫 waybill_no varchar(16)，
     存量叫 bill_code varchar(32) 即为不符合），这样符合率才反映真实治理进度。
@@ -497,6 +525,7 @@ async def confirm_standard_field(
     new_name = (payload.standard_name or sf.standard_name).strip()
     if not new_name:
         raise DataDictError("标准字段名不能为空")
+    old_name = sf.standard_name
     if new_name != sf.standard_name:
         clash = (
             (
@@ -530,6 +559,11 @@ async def confirm_standard_field(
     sf.has_conflict = False
     sf.confirmed_by = operator_id
     sf.confirmed_at = datetime.now(UTC)
+
+    # 改名定版时把来源字段名沉淀为业务别名（与合并一致），后续同名候选可按 ALIAS
+    # 命中本标准；释义拆组候选的名字是通用名（status 等），沉淀会误引所有同名字段，故不记。
+    if new_name != old_name and not sf.sub_key:
+        await attach_tag(session, sf.id, old_name, operator_id=operator_id)
 
     await recompute_conforms(session, sf)
     await session.flush()
@@ -625,7 +659,9 @@ async def merge_standard_field(
     source.merged_into_id = target.id
     await session.flush()
 
-    if alias and alias != target.standard_name:
+    # 释义拆组候选的名字是 status/type 这类通用名，沉淀成别名会把后续所有同名字段
+    # 都引向这一个标准，正好制造本次要解决的「同名不同义被并成一个」问题，故不记别名。
+    if alias and alias != target.standard_name and not source.sub_key:
         await attach_tag(session, target.id, alias, operator_id=operator_id)
 
     target.candidate_count = len(existing_urns)

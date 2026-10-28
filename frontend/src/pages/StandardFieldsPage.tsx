@@ -164,7 +164,8 @@ export default function StandardFieldsPage() {
       mergeStandardField(vars.sourceId, vars.targetId),
     onSuccess: (target) => {
       message.success(
-        `已关联到标准「${target.standard_name} ${target.raw_type}」，存量字段已迁移，原字段名记为业务别名`,
+        `已关联到标准「${target.standard_name} ${target.raw_type}」，存量字段已迁移` +
+          (mergeTarget?.source.sub_key ? "" : "，原字段名记为业务别名"),
       );
       setMergeTarget(null);
       setConfirmTarget(null);
@@ -239,9 +240,23 @@ export default function StandardFieldsPage() {
         dataIndex: "standard_name",
         width: 180,
         render: (value: string, row) => (
-          <Typography.Text strong code onClick={() => setDetailId(row.id)} style={{ cursor: "pointer" }}>
-            {value}
-          </Typography.Text>
+          <Space direction="vertical" size={2}>
+            <Typography.Text
+              strong
+              code
+              onClick={() => setDetailId(row.id)}
+              style={{ cursor: "pointer" }}
+            >
+              {value}
+            </Typography.Text>
+            {row.sub_key && (
+              <Tooltip title="通用字段名同名不同义，已按注释释义拆成独立候选，本条只代表其中一个概念">
+                <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+                  按释义分组
+                </Tag>
+              </Tooltip>
+            )}
+          </Space>
         ),
       },
       {
@@ -413,7 +428,7 @@ export default function StandardFieldsPage() {
         <Alert
           type="info"
           showIcon
-          message="治理闭环：同步存量字段 → 同名聚类生成候选 → 人工确认定版 → API / MCP 供 AI 建表查询；status、type 等黑名单通用字段名已排除，需逐表人工归组。"
+          message="治理闭环：同步存量字段 → 同名聚类生成候选 → 人工确认定版 → API / MCP 供 AI 建表查询；status、type 等通用字段名同名不同义，已按注释释义拆成独立候选，可各自定版。"
         />
 
         <ExcelImportCard />
@@ -438,7 +453,7 @@ export default function StandardFieldsPage() {
               pageSize: PAGE_SIZE,
               total: listQuery.data?.total ?? 0,
               showSizeChanger: false,
-              showTotal: (total) => `共 ${total} 个字段名`,
+              showTotal: (total) => `共 ${total} 个候选定义`,
               onChange: setPage,
             }}
           />
@@ -448,7 +463,10 @@ export default function StandardFieldsPage() {
       <Modal
         title={
           confirmTarget
-            ? `确认标准定义 · ${confirmTarget.cluster_key ?? confirmTarget.standard_name}`
+            ? `确认标准定义 · ${confirmTarget.cluster_key ?? confirmTarget.standard_name}` +
+              (confirmTarget.sub_key
+                ? `（${confirmTarget.business_meaning ?? "无释义"}）`
+                : "")
             : "确认标准定义"
         }
         open={confirmTarget !== null}
@@ -544,11 +562,13 @@ export default function StandardFieldsPage() {
                 onChange={(event) => setStandardName(event.target.value)}
                 placeholder="如：waybill_no（小写字母/数字/下划线）"
               />
-              {confirmTarget.cluster_key && confirmTarget.cluster_key !== standardName && (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  候选来源字段名 {confirmTarget.cluster_key} 将自动记为该标准的业务别名
-                </Typography.Text>
-              )}
+              {confirmTarget.cluster_key &&
+                confirmTarget.cluster_key !== standardName &&
+                !confirmTarget.sub_key && (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    候选来源字段名 {confirmTarget.cluster_key} 将自动记为该标准的业务别名
+                  </Typography.Text>
+                )}
             </div>
 
             <Space size="middle" wrap>
@@ -610,15 +630,21 @@ export default function StandardFieldsPage() {
         {mergeTarget && (
           <Space direction="vertical" size="small">
             <Typography.Text>
-              候选「{mergeTarget.source.cluster_key ?? mergeTarget.source.standard_name}」的
+              候选「{mergeTarget.source.cluster_key ?? mergeTarget.source.standard_name}」
+              {mergeTarget.source.sub_key
+                ? `（${mergeTarget.source.business_meaning ?? "无释义"}）`
+                : ""}
+              的
               {mergeTarget.source.candidate_count > 0
                 ? ` ${mergeTarget.source.candidate_count} 个存量字段将关联到标准「${mergeTarget.targetName}」`
                 : "证据将并入标准"}
               ，本候选不再作为独立标准（标记为已合并）。
             </Typography.Text>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              原字段名会记为目标标准的业务别名；存量字段中名称或类型与标准不一致的，
-              会标记为「不符合」并进入治理度量。
+              {mergeTarget.source.sub_key
+                ? "本候选是按释义拆出的通用名分组，原字段名不记为业务别名（否则会误引所有同名字段）；"
+                : "原字段名会记为目标标准的业务别名；"}
+              存量字段中名称或类型与标准不一致的，会标记为「不符合」并进入治理度量。
             </Typography.Text>
           </Space>
         )}

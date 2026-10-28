@@ -1,4 +1,4 @@
-from app.services.standard_field import ClusterCandidate, build_name_clusters
+from app.services.standard_field import ClusterCandidate, build_name_clusters, meaning_key
 
 
 def _row(name: str, urn: str, raw_type: str, logical: str, comment: str | None = None):
@@ -53,15 +53,63 @@ def test_cluster_prefills_meaning_from_most_common_comment():
     assert clusters[0].suggested_meaning == "运单号"
 
 
-def test_cluster_excludes_blacklisted_names():
+def test_cluster_splits_blacklisted_names_by_meaning():
+    """通用字段名不再排除：同名不同义各成一组，让 status 类字段也能定标。"""
     rows = [
-        _row("status", "u1", "tinyint", "INT"),
-        _row("order_no", "u2", "varchar(32)", "STRING"),
+        _row("status", "u1", "tinyint", "INT", "运单状态"),
+        _row("status", "u2", "tinyint", "INT", "工单状态"),
+        _row("status", "u3", "tinyint", "INT", "工单状态"),
+        _row("status", "u4", "tinyint", "INT", None),
     ]
 
-    clusters = build_name_clusters(rows, excluded_names={"status"})
+    clusters = build_name_clusters(rows, split_names={"status"})
 
-    assert [c.column_name for c in clusters] == ["order_no"]
+    by_meaning = {c.suggested_meaning: c for c in clusters}
+    assert set(by_meaning) == {"运单状态", "工单状态", None}
+    assert by_meaning["工单状态"].candidate_count == 2
+    assert by_meaning["运单状态"].candidate_count == 1
+    assert {c.sub_key for c in clusters} == {
+        meaning_key("运单状态"),
+        meaning_key("工单状态"),
+        meaning_key(None),
+    }
+
+
+def test_blacklisted_names_group_identical_meanings_after_normalizing():
+    rows = [
+        _row("remark", "u1", "varchar(255)", "STRING", "备注"),
+        _row("remark", "u2", "varchar(255)", "STRING", " 备注。 "),
+        _row("remark", "u3", "varchar(255)", "STRING", "备注."),
+    ]
+
+    clusters = build_name_clusters(rows, split_names={"remark"})
+
+    assert len(clusters) == 1
+    assert clusters[0].candidate_count == 3
+
+
+def test_non_blacklisted_names_ignore_comment_differences():
+    rows = [
+        _row("waybill_no", "u1", "varchar(32)", "STRING", "运单号"),
+        _row("waybill_no", "u2", "varchar(32)", "STRING", "运单编号"),
+    ]
+
+    clusters = build_name_clusters(rows, split_names={"status"})
+
+    assert len(clusters) == 1
+    assert clusters[0].sub_key == ""
+
+
+def test_split_groups_merge_sync_and_doc_evidence_of_same_meaning():
+    sync_rows = [_row("status", "u1", "tinyint", "INT", "订单状态")]
+    doc_rows = [("status", "int", "订单状态")]
+
+    clusters = build_name_clusters(sync_rows, doc_rows, split_names={"status"})
+
+    assert len(clusters) == 1
+    assert clusters[0].candidate_count == 1
+    assert clusters[0].doc_count == 1
+    assert clusters[0].type_distribution == {"tinyint": 1, "int": 1}
 
 
 def test_clusters_sorted_by_candidate_count_desc():
@@ -74,6 +122,14 @@ def test_clusters_sorted_by_candidate_count_desc():
 
     assert [c.column_name for c in clusters] == ["common_field", "rare_field"]
     assert all(isinstance(c, ClusterCandidate) for c in clusters)
+
+
+def test_meaning_key_groups_normalized_text_and_separates_empty():
+    assert meaning_key(" 运单状态。") == meaning_key("运单状态")
+    assert meaning_key("运单状态") != meaning_key("工单状态")
+    # 空释义单独成组，不会与任何有释义的组混桶
+    assert meaning_key(None) == meaning_key("   ")
+    assert meaning_key("") != meaning_key("状态")
 
 
 def test_doc_only_field_name_still_produces_candidate():

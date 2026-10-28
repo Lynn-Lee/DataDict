@@ -3,7 +3,8 @@
 采集流程（collector 角色）对知识层无写权限——DEV-TASKS §7 红线第 6 条。
 因此比对不在同步事务内做，而是同步完成后由本服务用 web 会话执行，幂等可重跑：
 
-- 活跃字段按字段名匹配 CONFIRMED 标准定义
+- 活跃字段按「字段名」匹配已定版标准；通用字段名（status/type 等同名不同义）
+  已按释义拆组，则按「字段名 + 释义哈希」精确命中自己那一组，找不到组的不挂载
 - 未挂载的字段 → 挂入 standard_field_item；类型一致 conforms=true，
   不一致 conforms=false 并生成 STANDARD_CONFLICT 治理待办（当周拦截新增混乱）
 - 已挂载但类型漂移的字段 → 重算 conforms，漂移为不符合时补待办
@@ -21,6 +22,7 @@ from app.models.knowledge import StandardField, StandardFieldItem
 from app.models.metadata import ColumnMeta, TableMeta
 from app.models.support import AnnotationTodo
 from app.schemas.governance import GovernanceTodoOut, ResolveTodoPayload
+from app.services.standard_field import meaning_key
 
 GOVERNANCE_TODO_TYPE = "STANDARD_CONFLICT"
 
@@ -43,7 +45,15 @@ async def run_governance_sweep(session: AsyncSession) -> GovernanceSweepSummary:
     )
     if not standards:
         return summary
-    std_by_name = {std.standard_name: std for std in standards}
+    # 两级挂载：通用字段名（status/type 等）同名不同义，按「字段名 + 释义哈希」
+    # 精确命中自己那一组；其余标准仍按字段名整体命中。
+    std_by_name: dict[str, StandardField] = {}
+    std_by_meaning: dict[tuple[str, str], StandardField] = {}
+    for standard in standards:
+        if not standard.sub_key:
+            std_by_name[standard.standard_name] = standard
+        elif standard.cluster_key:
+            std_by_meaning[(standard.cluster_key, standard.sub_key)] = standard
 
     items = (
         (
@@ -70,15 +80,25 @@ async def run_governance_sweep(session: AsyncSession) -> GovernanceSweepSummary:
         ).scalars()
     )
 
+    names = set(std_by_name) | {name for name, _ in std_by_meaning}
     col_rows = await session.execute(
-        select(ColumnMeta.urn, ColumnMeta.column_name, ColumnMeta.raw_type).where(
+        select(
+            ColumnMeta.urn,
+            ColumnMeta.column_name,
+            ColumnMeta.raw_type,
+            ColumnMeta.raw_comment,
+        ).where(
             ColumnMeta.is_deleted.is_(False),
-            ColumnMeta.column_name.in_(list(std_by_name)),
+            ColumnMeta.column_name.in_(list(names)),
         )
     )
 
-    for urn, column_name, raw_type in col_rows:
-        std = std_by_name[column_name]
+    for urn, column_name, raw_type, raw_comment in col_rows:
+        std = std_by_meaning.get((column_name, meaning_key(raw_comment))) or std_by_name.get(
+            column_name
+        )
+        if std is None:
+            continue
         conforms = raw_type == std.raw_type
         item = item_by_urn.get(urn)
 

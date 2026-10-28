@@ -9,6 +9,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
@@ -133,14 +134,23 @@ export default function StandardLibraryPage() {
       dataIndex: "standard_name",
       width: 180,
       render: (value: string, row) => (
-        <Typography.Text
-          strong
-          code
-          style={{ cursor: "pointer" }}
-          onClick={() => setDetailId(row.id)}
-        >
-          {value}
-        </Typography.Text>
+        <Space direction="vertical" size={2}>
+          <Typography.Text
+            strong
+            code
+            style={{ cursor: "pointer" }}
+            onClick={() => setDetailId(row.id)}
+          >
+            {value}
+          </Typography.Text>
+          {row.sub_key && (
+            <Tooltip title="通用字段名的一个释义分组：同名字段可能有多条标准，各自代表不同概念">
+              <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+                按释义分组
+              </Tag>
+            </Tooltip>
+          )}
+        </Space>
       ),
     },
     {

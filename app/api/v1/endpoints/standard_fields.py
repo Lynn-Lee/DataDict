@@ -33,7 +33,8 @@ router = APIRouter(prefix="/standard-fields", tags=["standard-fields"])
     summary="生成候选标准定义",
     description=(
         "对全库未删除字段按字段名聚类，生成或刷新 DRAFT 候选标准定义。"
-        "幂等可重跑：已 CONFIRMED 的同名标准不会被覆盖；黑名单字段名自动排除。"
+        "幂等可重跑：已 CONFIRMED 的标准不会被覆盖。status、type 等通用字段名同名不同义，"
+        "不排除、不参与按名整体聚类，而是按注释释义拆成独立候选。"
     ),
 )
 async def generate_candidates(
@@ -55,7 +56,8 @@ async def generate_candidates(
     summary="标准字段定义列表",
     description=(
         "候选与定版标准定义列表。status=DRAFT 为待确认候选，CONFIRMED 为已定版；"
-        "q 按字段名或业务释义模糊匹配。"
+        "q 按字段名或业务释义模糊匹配。通用字段名（status/type 等）按释义拆组，"
+        "同名多条候选可并存，用 sub_key 区分（空串表示按字段名整体定标）。"
     ),
 )
 async def list_standard_fields(
@@ -91,8 +93,10 @@ async def list_standard_fields(
         "人工确认候选为标准定义：标准字段名、类型（含长度）、逻辑类型、释义均可修改，"
         "状态 DRAFT→CONFIRMED，并按「字段名 + 类型都一致」回算组内存量字段的 conforms。"
         "冲突候选必须显式给出裁决后的 raw_type/logical_type。"
-        "若改名后与库中已有活跃标准重名，返回 409 并给出该标准，应改走 merge-into 关联，"
-        "避免标准库出现两个同义标准。"
+        "改名定版时，候选来源字段名自动记为该标准的业务别名（按释义拆组的通用名除外）。"
+        "若改名后与库中已有活跃标准重名，返回 409 并给出该标准，"
+        "应改走 merge-into 关联，避免标准库出现两个同义标准"
+        "（不改名的候选不受影响：通用字段名按释义拆组后，同名不同义可各自定版并存）。"
     ),
 )
 async def confirm_standard_field(
@@ -176,7 +180,8 @@ async def detach_standard_field_tag(
     description=(
         "候选与标准库中已有条目是同一概念时使用：存量字段关联迁到目标下并按"
         "「名 + 型」重算 conforms，候选置 MERGED，来源字段名记为目标的业务别名"
-        "（后续同步可据此拦截新增的异名违规字段）。标准库因此不会出现两个同义标准。"
+        "（后续同步可据此拦截新增的异名违规字段；按释义拆组的通用名不记别名）。"
+        "标准库因此不会出现两个同义标准。"
         "目标可以是已定版标准，也可以是另一个待确认候选（同义候选先归并再一起定版）。"
     ),
 )

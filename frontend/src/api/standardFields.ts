@@ -17,6 +17,8 @@ export interface StandardField {
   id: number;
   standard_name: string;
   cluster_key: string | null;
+  // 非空 = 通用字段名按注释释义拆出来的分组，同名可能并存多条不同概念
+  sub_key: string;
   merged_into_id: number | null;
   business_meaning: string | null;
   logical_type: string;

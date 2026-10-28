@@ -174,6 +174,8 @@ class StandardField(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     standard_name: Mapped[str] = mapped_column(String(128), nullable=False)
     cluster_key: Mapped[str | None] = mapped_column(String(128))
+    # 通用字段名同名不同义时按释义分组，sub_key 存该组释义哈希；'' 表示按字段名整体定标
+    sub_key: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     merged_into_id: Mapped[int | None] = mapped_column(ForeignKey("standard_field.id"))
     business_meaning: Mapped[str | None]
     logical_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -194,12 +196,14 @@ class StandardField(Base):
 
     __table_args__ = (
         Index(
-            "uq_standard_field_active_name",
+            "uq_standard_field_active_name_sub",
             "standard_name",
+            "sub_key",
             unique=True,
             postgresql_where=text("status IN ('DRAFT', 'CONFIRMED')"),
         ),
         Index("idx_standard_field_status", "status"),
+        Index("idx_standard_field_cluster_sub", "cluster_key", "sub_key"),
     )
 
 
