@@ -24,7 +24,9 @@ router = APIRouter(prefix="/governance", tags=["governance"])
     summary="触发治理扫描",
     description=(
         "把活跃字段与已定版标准比对：未挂载的挂入标准组并回算 conforms，"
-        "类型不一致的生成 STANDARD_CONFLICT 待办。幂等可重跑。"
+        "类型不一致的生成 STANDARD_CONFLICT 待办，注释变更导致释义组变化的重挂到新组，"
+        "仍未关联任何已定版标准的字段按表聚合生成 STANDARD_MISSING 待办。幂等可重跑。"
+        "同步后系统会自动按变更字段做增量聚类再扫描，这里只做比对不做聚类。"
     ),
 )
 async def trigger_sweep(
@@ -37,6 +39,13 @@ async def trigger_sweep(
         attached_conflicting=summary.attached_conflicting,
         conforms_updated=summary.conforms_updated,
         todos_created=summary.todos_created,
+        reattached=summary.reattached,
+        detached=summary.detached,
+        missing_todos_created=summary.missing_todos_created,
+        missing_todos_updated=summary.missing_todos_updated,
+        missing_todos_closed=summary.missing_todos_closed,
+        missing_tables=summary.missing_tables,
+        scope="SWEEP_ONLY",
     )
 
 
@@ -45,8 +54,9 @@ async def trigger_sweep(
     response_model=MetadataPage[GovernanceTodoOut],
     summary="治理待办列表",
     description=(
-        "同步比对产生的标准冲突待办。status=OPEN 为待处理；"
-        "status=IGNORED 中含豁免清单（action=EXEMPT，带原因留痕）。"
+        "同步比对产生的待办：STANDARD_CONFLICT=字段类型与标准不一致（按字段），"
+        "STANDARD_MISSING=该表仍有字段没关联已定版标准（按表聚合）。"
+        "status=OPEN 为待处理；status=IGNORED 中含豁免清单（action=EXEMPT，带原因留痕）。"
     ),
 )
 async def list_todos(
@@ -55,11 +65,15 @@ async def list_todos(
         str | None,
         Query(description="OPEN / DONE / IGNORED；不传返回全部", examples=["OPEN"]),
     ] = "OPEN",
+    todo_type: Annotated[
+        str | None,
+        Query(description="STANDARD_CONFLICT / STANDARD_MISSING；不传返回两类", examples=["OPEN"]),
+    ] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> MetadataPage[GovernanceTodoOut]:
     total, items = await service.list_governance_todos(
-        session, status=status, page=page, page_size=page_size
+        session, status=status, todo_type=todo_type, page=page, page_size=page_size
     )
     return MetadataPage(total=total, page=page, page_size=page_size, items=items)
 

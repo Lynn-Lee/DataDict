@@ -25,7 +25,7 @@ from app.core.config import get_settings
 from app.core.credentials import decrypt_credential
 from app.db.session import collector_session
 from app.models.metadata import ColumnMeta, DataSource, IndexMeta, TableMeta
-from app.services.schema_diff import SQLAlchemySchemaChangeLogger
+from app.services.schema_diff import SchemaChangeSet, SQLAlchemySchemaChangeLogger
 from app.services.sync_run import (
     SQLAlchemySyncRunRecorder,
     SyncFailure,
@@ -72,7 +72,7 @@ class SchemaChangeLogger(Protocol):
         columns: list[dict[str, Any]],
         indexes: list[dict[str, Any]],
         detected_at: datetime,
-    ) -> int: ...
+    ) -> SchemaChangeSet: ...
 
 
 class SyncRunRecorder(Protocol):
@@ -116,6 +116,8 @@ class SyncResult:
     changed_count: int = 0
     fail_count: int = 0
     comment_fill_rate: Decimal = Decimal("0.00")
+    # 本轮新增/改类型/改注释的字段 URN：同步后治理据此只做增量聚类，不全量重算
+    governed_column_urns: tuple[str, ...] = ()
 
 
 class InMemorySourceLock:
@@ -487,7 +489,7 @@ class MetadataSyncService:
             except Exception as exc:  # noqa: BLE001 - 单库索引采集失败需记录明细并继续其他库
                 failures.append(_sync_failure(source.id, database.name, "indexes", exc))
 
-        changed_count = await self._change_logger.detect_and_log(
+        change_set = await self._change_logger.detect_and_log(
             session,
             source_id=source.id,
             tables=table_rows,
@@ -510,7 +512,7 @@ class MetadataSyncService:
             trigger_type=trigger_type,
             status=status,
             scanned_tables=len(table_rows),
-            changed_count=changed_count,
+            changed_count=change_set.count,
             comment_fill_rate=comment_fill_rate,
             started_at=started_at,
             finished_at=finished_at,
@@ -523,9 +525,10 @@ class MetadataSyncService:
             scanned_tables=len(table_rows),
             scanned_columns=len(column_rows),
             scanned_indexes=len(index_rows),
-            changed_count=changed_count,
+            changed_count=change_set.count,
             fail_count=len(failures),
             comment_fill_rate=comment_fill_rate,
+            governed_column_urns=tuple(sorted(change_set.governed_column_urns)),
         )
 
 

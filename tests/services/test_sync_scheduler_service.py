@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.models.metadata import DataSource
+from app.services.metadata_sync import SyncResult
 from app.services.sync_scheduler import MetadataSyncScheduler
 
 
@@ -70,8 +71,9 @@ class RecordingSchedulerBackend:
 
 
 class RecordingSyncService:
-    def __init__(self) -> None:
+    def __init__(self, result: object | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
+        self._result = result
 
     async def sync_source(
         self,
@@ -80,7 +82,7 @@ class RecordingSyncService:
         trigger_type: str,
         db_name: str | None = None,
         table_name: str | None = None,
-    ) -> None:
+    ) -> object:
         self.calls.append(
             {
                 "source_id": source_id,
@@ -89,6 +91,21 @@ class RecordingSyncService:
                 "table_name": table_name,
             }
         )
+        return self._result
+
+
+class RecordingGovernanceRunner:
+    """同步后治理链路的替身：记录本轮传给治理的变更字段，不参与真实数据库。"""
+
+    def __init__(self, *, raises: bool = False) -> None:
+        self.calls: list[object] = []
+        self.raises = raises
+
+    async def __call__(self, changed_column_urns: object = None) -> str:
+        self.calls.append(changed_column_urns)
+        if self.raises:
+            raise RuntimeError("治理链路失败")
+        return "ok"
 
 
 @asynccontextmanager
@@ -184,3 +201,73 @@ async def test_scheduler_manual_trigger_supports_source_database_and_table_scope
             "table_name": "orders",
         }
     ]
+
+
+async def test_sync_chains_incremental_governance_with_changed_columns() -> None:
+    """同步成功后必须立刻按变更字段跑治理链路，否则新字段静默入库无人拦截。"""
+    governance = RecordingGovernanceRunner()
+    service = MetadataSyncScheduler(
+        session_factory=lambda: _session_factory([_source(id=7)]),
+        sync_service=RecordingSyncService(
+            SyncResult(
+                source_id=7,
+                status="SUCCESS",
+                governed_column_urns=("mysql:crm:sales:orders:status",),
+            )
+        ),
+        scheduler=RecordingSchedulerBackend(),
+        governance_runner=governance,
+    )
+
+    await service.run_source(7)
+
+    assert governance.calls == [["mysql:crm:sales:orders:status"]]
+
+
+async def test_skipped_sync_does_not_run_governance() -> None:
+    governance = RecordingGovernanceRunner()
+    service = MetadataSyncScheduler(
+        session_factory=lambda: _session_factory([_source(id=7)]),
+        sync_service=RecordingSyncService(SyncResult(source_id=7, status="SKIPPED_LOCKED")),
+        scheduler=RecordingSchedulerBackend(),
+        governance_runner=governance,
+    )
+
+    await service.trigger_manual(7)
+
+    assert governance.calls == []
+
+
+async def test_governance_failure_does_not_fail_the_sync() -> None:
+    """采集与治理是两套写权限：治理炸了不能把同步结果改成失败。"""
+    service = MetadataSyncScheduler(
+        session_factory=lambda: _session_factory([_source(id=7)]),
+        sync_service=RecordingSyncService(
+            SyncResult(source_id=7, status="PARTIAL", governed_column_urns=("u1",))
+        ),
+        scheduler=RecordingSchedulerBackend(),
+        governance_runner=RecordingGovernanceRunner(raises=True),
+    )
+
+    result = await service.run_source(7)
+
+    assert result.status == "PARTIAL"
+
+
+async def test_daily_job_runs_full_governance_pass() -> None:
+    """每日兜底 job 走不带变更参数的全量重聚（兜住 Excel 新导入、标准新定版）。"""
+    backend = RecordingSchedulerBackend()
+    governance = RecordingGovernanceRunner()
+    service = MetadataSyncScheduler(
+        session_factory=lambda: _session_factory([_source(id=7, sync_cron="0 2 * * *")]),
+        sync_service=RecordingSyncService(),
+        scheduler=backend,
+        governance_runner=governance,
+    )
+
+    await service.start()
+
+    sweep_job = next(job for job in backend.jobs if job["id"] == "governance-sweep")
+    assert sweep_job["func"] is governance
+    await sweep_job["func"]()
+    assert governance.calls == [None]

@@ -179,41 +179,59 @@ async def load_split_names(session: AsyncSession) -> set[str]:
     return {name for (name,) in rows}
 
 
-async def load_cluster_rows(session: AsyncSession) -> list[tuple[str, str, str, str, str | None]]:
-    """源库侧聚类输入：未删除字段的 (字段名, urn, 原始类型, 逻辑类型, 注释)。"""
-    rows = await session.execute(
-        select(
-            ColumnMeta.column_name,
-            ColumnMeta.urn,
-            ColumnMeta.raw_type,
-            ColumnMeta.logical_type,
-            ColumnMeta.raw_comment,
-        ).where(ColumnMeta.is_deleted.is_(False))
-    )
+async def load_cluster_rows(
+    session: AsyncSession, *, column_names: set[str] | None = None
+) -> list[tuple[str, str, str, str, str | None]]:
+    """源库侧聚类输入：未删除字段的 (字段名, urn, 原始类型, 逻辑类型, 注释)。
+
+    `column_names` 限定只取这些字段名（同步后增量聚类用）；留空取全库。
+    """
+    stmt = select(
+        ColumnMeta.column_name,
+        ColumnMeta.urn,
+        ColumnMeta.raw_type,
+        ColumnMeta.logical_type,
+        ColumnMeta.raw_comment,
+    ).where(ColumnMeta.is_deleted.is_(False))
+    if column_names is not None:
+        if not column_names:
+            return []
+        stmt = stmt.where(ColumnMeta.column_name.in_(sorted(column_names)))
+    rows = await session.execute(stmt)
     return [
         (name, urn, raw_type, logical_type, comment)
         for name, urn, raw_type, logical_type, comment in rows
     ]
 
 
-async def load_doc_rows(session: AsyncSession) -> list[tuple[str, str | None, str | None]]:
+async def load_doc_rows(
+    session: AsyncSession, *, column_names: set[str] | None = None
+) -> list[tuple[str, str | None, str | None]]:
     """Excel 文档侧聚类输入：留档的 (字段名, 文档类型, 字段描述)。"""
-    rows = await session.execute(
-        select(ExcelFieldDoc.column_name, ExcelFieldDoc.column_type, ExcelFieldDoc.column_desc)
-    )
+    stmt = select(ExcelFieldDoc.column_name, ExcelFieldDoc.column_type, ExcelFieldDoc.column_desc)
+    if column_names is not None:
+        if not column_names:
+            return []
+        stmt = stmt.where(ExcelFieldDoc.column_name.in_(sorted(column_names)))
+    rows = await session.execute(stmt)
     return [(name, column_type, column_desc) for name, column_type, column_desc in rows]
 
 
-async def generate_standard_field_candidates(session: AsyncSession) -> ClusteringSummary:
+async def generate_standard_field_candidates(
+    session: AsyncSession, *, column_names: set[str] | None = None
+) -> ClusteringSummary:
     """按字段名（通用名再按释义）聚类，源库 ∪ Excel 文档，生成/刷新 DRAFT 候选。
 
     幂等可重跑：已有 DRAFT 候选更新统计并整体替换源字段关联；
     已 CONFIRMED 的同名标准不动（定版结论优先于重新聚类）。
+
+    `column_names` 给定时只重聚这些字段名（同步后增量用）。注意按**字段名**而非按
+    字段过滤：同名的全部存量字段都要参与计数，否则类型分布与 candidate_count 会失真。
     """
     summary = ClusteringSummary()
     split_names = await load_split_names(session)
-    sync_rows = await load_cluster_rows(session)
-    doc_rows = await load_doc_rows(session)
+    sync_rows = await load_cluster_rows(session, column_names=column_names)
+    doc_rows = await load_doc_rows(session, column_names=column_names)
     candidates = build_name_clusters(sync_rows, doc_rows, split_names=split_names)
 
     # 按 (cluster_key, sub_key) 匹配既有候选：标准可能被改名或合并，用来源字段名+

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol
@@ -18,6 +19,33 @@ class DiffSession(Protocol):
     async def execute(self, statement: object, parameters: dict[str, Any] | None = None) -> Any: ...
 
 
+# 需要同步后治理复核的字段变更：新增、改类型、改注释（注释变了意味着释义组可能变了）
+GOVERNED_COLUMN_CHANGES = frozenset(
+    {"COLUMN_ADDED", "COLUMN_TYPE_CHANGED", "COLUMN_COMMENT_CHANGED"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaChangeSet:
+    """一轮 diff 的变更明细，供落库计数与同步后治理定位受影响字段。"""
+
+    changes: list[dict[str, Any]]
+
+    @property
+    def count(self) -> int:
+        return len(self.changes)
+
+    @property
+    def governed_column_urns(self) -> set[str]:
+        """本轮需要重聚/重挂的字段 URN（不含被删除的字段）。"""
+        return {
+            str(change["urn"])
+            for change in self.changes
+            if change.get("asset_type") == "COLUMN"
+            and change.get("change_type") in GOVERNED_COLUMN_CHANGES
+        }
+
+
 class SQLAlchemySchemaChangeLogger:
     def __init__(self, *, batch_size: int):
         self._batch_size = max(1, batch_size)
@@ -31,7 +59,7 @@ class SQLAlchemySchemaChangeLogger:
         columns: list[dict[str, Any]],
         indexes: list[dict[str, Any]],
         detected_at: datetime,
-    ) -> int:
+    ) -> SchemaChangeSet:
         scanned_databases = {str(row["db_name"]) for row in tables}
         existing_tables = await _load_existing_tables(session, source_id, scanned_databases)
         table_urns = {str(row["urn"]) for row in tables}
@@ -48,7 +76,7 @@ class SQLAlchemySchemaChangeLogger:
         )
         await self.log_changes(session, changes)
         await self.mark_soft_deletes(session, changes, deleted_at=detected_at)
-        return len(changes)
+        return SchemaChangeSet(changes=changes)
 
     async def log_changes(
         self,

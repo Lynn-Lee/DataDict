@@ -8,7 +8,6 @@ GET /datasources 列表在 metadata_queries 中（消费方只读视角）；
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
-from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import DataDictError
@@ -20,8 +19,6 @@ from app.schemas.datasource_admin import (
 )
 from app.schemas.metadata_queries import DataSourceOut
 from app.services import datasource_admin as service
-from app.services.governance import run_governance_sweep_standalone
-from app.services.sync_scheduler import MetadataSyncScheduler
 
 router = APIRouter(prefix="/datasources", tags=["datasources"])
 
@@ -88,23 +85,15 @@ async def test_data_source_connection(
     return await service.test_data_source_connection(session, source_id)
 
 
-async def _sync_then_sweep(scheduler: MetadataSyncScheduler, source_id: int) -> None:
-    """手动同步完成后链式执行治理扫描（新字段立即与已定版标准比对）。"""
-    await scheduler.trigger_manual(source_id)
-    try:
-        await run_governance_sweep_standalone()
-    except Exception:  # noqa: BLE001 - 扫描失败不影响同步结果，记录后由每日 job 兜底
-        logger.exception("同步后治理扫描失败 source_id={}", source_id)
-
-
 @router.post(
     "/{source_id}/sync",
     response_model=SyncTriggerOut,
     status_code=202,
     summary="手动触发同步",
     description=(
-        "数据源级立即同步（M2-2），后台执行不阻塞请求；完成后自动触发治理扫描，"
-        "新字段与已定版标准比对生成待办。进度见 sync_job_log / 同步比对待办。"
+        "数据源级立即同步（M2-2），后台执行不阻塞请求；完成后自动接治理链路——"
+        "按本轮新增/改类型/改注释的字段做增量聚类，再与已定版标准比对生成待办"
+        "（类型冲突按字段、未挂标准缺口按表）。进度见 sync_job_log / 同步比对待办。"
     ),
 )
 async def trigger_data_source_sync(
@@ -117,5 +106,5 @@ async def trigger_data_source_sync(
     scheduler = getattr(request.app.state, "sync_scheduler", None)
     if scheduler is None:
         raise DataDictError("同步调度器未就绪，请稍后重试")
-    background.add_task(_sync_then_sweep, scheduler, source_id)
+    background.add_task(scheduler.trigger_manual, source_id)
     return SyncTriggerOut(started=True, source_id=source_id)

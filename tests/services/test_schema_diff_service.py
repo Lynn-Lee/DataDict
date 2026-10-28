@@ -3,7 +3,11 @@ from typing import Any
 
 from sqlalchemy.dialects import postgresql
 
-from app.services.schema_diff import SQLAlchemySchemaChangeLogger, detect_schema_changes
+from app.services.schema_diff import (
+    SchemaChangeSet,
+    SQLAlchemySchemaChangeLogger,
+    detect_schema_changes,
+)
 
 
 class RecordingSQLSession:
@@ -260,6 +264,49 @@ async def test_schema_change_logger_limits_existing_tables_to_scanned_databases(
     assert "table_meta.db_name IN" in session.statements[0]
     assert "table_meta.is_deleted IS false" in session.statements[0]
     assert "column_meta.is_deleted IS false" in session.statements[1]
+
+
+def test_change_set_selects_governed_columns_for_post_sync_governance() -> None:
+    """同步后治理只处理新增/改型/改注释的字段；删除与索引变更不参与增量聚类。"""
+    changes = detect_schema_changes(
+        existing_tables=[{"urn": "mysql:p:d:t_old"}],
+        existing_columns=[
+            {"urn": "mysql:p:d:t:gone", "table_urn": "mysql:p:d:t", "column_name": "gone"},
+            {
+                "urn": "mysql:p:d:t:amount",
+                "table_urn": "mysql:p:d:t",
+                "column_name": "amount",
+                "raw_type": "decimal(10,2)",
+                "raw_comment": "金额",
+            },
+        ],
+        existing_indexes=[],
+        new_tables=[],
+        new_columns=[
+            {
+                "urn": "mysql:p:d:t:amount",
+                "table_urn": "mysql:p:d:t",
+                "column_name": "amount",
+                "raw_type": "decimal(12,2)",
+                "raw_comment": "金额",
+            },
+            {
+                "urn": "mysql:p:d:t:status",
+                "table_urn": "mysql:p:d:t",
+                "column_name": "status",
+                "raw_type": "tinyint",
+                "raw_comment": "订单状态",
+            },
+        ],
+        new_indexes=[],
+        detected_at=datetime.now(UTC),
+    )
+
+    change_set = SchemaChangeSet(changes=changes)
+    assert change_set.governed_column_urns == {
+        "mysql:p:d:t:amount",
+        "mysql:p:d:t:status",
+    }
 
 
 def test_table_snapshot_is_json_serializable_with_real_db_created_at() -> None:

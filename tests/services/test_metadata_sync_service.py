@@ -21,6 +21,7 @@ from app.services.metadata_sync import (
     RedisPostgresSourceLock,
     SQLAlchemyMetadataWriter,
 )
+from app.services.schema_diff import SchemaChangeSet
 
 
 class FakeCollector(BaseCollector):
@@ -183,10 +184,18 @@ class RecordingChangeLogger:
         columns: list[dict[str, Any]],
         indexes: list[dict[str, Any]],
         detected_at: datetime,
-    ) -> int:
+    ) -> SchemaChangeSet:
         del session, source_id, detected_at
         self.calls.append((tables, columns, indexes))
-        return 1
+        return SchemaChangeSet(
+            changes=[
+                {
+                    "asset_type": "COLUMN",
+                    "change_type": "COLUMN_ADDED",
+                    "urn": "mysql:crm:sales:orders:new_col",
+                }
+            ]
+        )
 
 
 class RecordingRunRecorder:
@@ -340,6 +349,8 @@ async def test_sync_source_filters_scope_decrypts_credentials_and_upserts_snapsh
     assert writer.column_urns == ["mysql:crm:sales:orders:pay_amount"]
     assert writer.index_names == ["idx_orders_pay_amount"]
     assert result.changed_count == 1
+    # 同步结果必须带出受影响字段，同步后治理才能做增量聚类而不是全量重算
+    assert result.governed_column_urns == ("mysql:crm:sales:orders:new_col",)
     assert change_logger.calls[0][0][0]["urn"] == "mysql:crm:sales:orders"
     assert session.commits == 1
 
