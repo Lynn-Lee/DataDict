@@ -516,6 +516,12 @@ SELECT ... FROM v_column_effective WHERE NOT is_deleted AND ...
 
 ### M6 标注工作台 ★ 核心模块
 
+> **【V0.1 落地修正（2026-10-27）】本模块的定位已被 M13 标准定义库取代。**
+> 业务释义与业务标签只挂在**标准**上；在具体字段上写释义、打标签会制造分散的第二真相，与"字段定义统一"的目标相悖。
+> 字段的正确动作是**关联到某个标准**（`standard_field_item` + `conforms`），人工标注与 Excel 导入都降级为
+> 候选生成与异名归组的**原料**，不是交付物。因此 M6.2 的四种批量标注模式（尤其"应用到全部"）不再实现，
+> 由 M13-1 的同名聚类 + M13-2 的人工定版替代。表详情页保留字段级"业务含义"行内编辑属历史遗留，后续移除。
+
 #### M6.1 标注内容项
 
 **字段级**
@@ -666,6 +672,10 @@ WHERE is_deleted = FALSE;
 ---
 
 ### M8 搜索与浏览门户 ★ 核心模块
+
+> **【V0.1 落地修正（2026-10-26）】独立的「搜索」页面已从导航移除**：同一件事有两个入口会让用户搞不清哪个答案作数，
+> 而唯一真相源是 M13 标准定义库。字段名/释义的检索与浏览由 M13-3「标准定义库」页面承担（pg_trgm 检索方案 B① 不变，
+> 阈值仍按数据库级配置）；表目录/表详情继续承担资产浏览与字段→标准的关联入口。
 
 #### 【修订 B①】检索方案：pg_trgm + 生成列
 
@@ -891,6 +901,25 @@ class UrnQuery(BaseModel):
 | GET | `/api/v1/tables` | 表列表（筛选）或表详情（传 urn） |
 | GET | `/api/v1/columns` | 字段列表（传 table_urn）或字段详情（传 urn） |
 | GET | `/api/v1/tables/ddl?urn=` | 建表语句 |
+| GET | `/api/v1/changes` | 变更时间线（按表/字段过滤，来自 `schema_change_log`） |
+
+**标准定义与治理类（M13，V0.1 已实现）**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/standard-fields` | 候选与定版标准列表（`status` / `conflict` / `q` 筛选；同名不同义多条用 `sub_key` 区分） |
+| GET | `/api/v1/standard-fields/library` | **终版标准定义库**（含业务标签）；设计态查询与 AI/MCP 消费的入口 |
+| GET | `/api/v1/standard-fields/{id}` | 标准详情 + 组内存量源字段清单（`conforms` 结果） |
+| POST | `/api/v1/standard-fields/generate` | 按字段名聚类生成/刷新 DRAFT 候选（幂等；通用名按释义拆组） |
+| POST | `/api/v1/standard-fields/{id}/confirm` | 定版：名称/类型/逻辑类型/释义可改；改名撞活跃标准返回 409 + `existing_id` |
+| POST | `/api/v1/standard-fields/{id}/merge-into/{target_id}` | 同义候选归并：存量关联迁到目标、候选置 MERGED、名级候选的来源字段名沉淀为业务别名 |
+| POST/DELETE | `/api/v1/standard-fields/{id}/tags[/{tag_id}]` | 业务标签（各业务域叫法）增删，复用 M5 标签体系，urn 约定 `standard:{id}` |
+| GET | `/api/v1/standard-fields/tag-options` | 已有业务别名标签名，供前端补全 |
+| POST | `/api/v1/governance/sweep` | 手动触发治理扫描（挂载/重挂/conforms 回算 + 两类待办；不做聚类） |
+| GET | `/api/v1/governance/todos` | 待办列表，`todo_type` 可筛 `STANDARD_CONFLICT` / `STANDARD_MISSING` |
+| POST | `/api/v1/governance/todos/{id}/resolve` | 处理待办：ADOPT / EXEMPT（必填原因）/ IGNORE |
+| POST | `/api/v1/imports/excel` | 上传历史数据字典 .xlsx（`dry_run` 仅解析预览），按 `source_file` 幂等 |
+| POST | `/api/v1/datasources/{id}/sync` | 手动同步（后台执行），完成后自动接「增量聚类 → 扫描 → 待办」链路 |
 
 **检索类**
 
@@ -1199,7 +1228,42 @@ async def test_collector_cannot_write_annotation(collector_session):
 
 ---
 
-## 五、数据模型设计
+### M13 标准定义库与字段统一治理 ★ 本项目的真实目标（V0.1 已实现）
+
+M1~M12 是"可检索的元数据知识库"，M13 才是立项动机：**一个公司内同一业务含义的字段，最终只有一个标准定义**（字段名 + 类型含长度 + 中文释义）。起因是不同研发各自建模，同一个"寄件网点"落成了 `send_site_code varchar(16)` / `create_site_code bigint` / `send_site_name varchar(64)`，下游汇总与表间关联因此失真。
+
+**权威模型**：标准定义库是唯一的知识资产与真相源。业务释义与业务标签（同一含义在各业务域的叫法）都挂在**标准**上；源库字段**不携带独立释义**，它只做一件事——关联到某个标准（`standard_field_item` + `conforms`）。因此 M6 的字段级标注不是交付物，只是归组原料；表目录的职能是浏览 + 字段→标准的关联入口 + 单表变更审计。
+
+**闭环（已实现的部分全部可幂等重跑）**
+
+| 步骤 | 做法 | 位置 |
+|---|---|---|
+| ① 原样同步 | 各源库表结构按现状采集，不做改造 | M2/M3 |
+| ② 候选生成 | 按**字段名**聚类（通用字段名再按注释释义拆组，见【修订 A8】），源库与 Excel 历史字典是**并集**的两路输入 | M13-1 |
+| ③ 人工定版 | 名称/类型/逻辑类型/释义全部可编辑；相似度提示"标准库疑似已有同一概念"，可一键关联合并 | M13-2 |
+| ④ 归属与度量 | 定版后按「字段名 + 类型**都**一致」回算 `conforms`；存量表不改造，只标记不符合 | M13-3 |
+| ⑤ 同步后拦截 | 新增/变更字段 → 增量聚类 → 两级挂载比对 → `STANDARD_CONFLICT`（按字段）与 `STANDARD_MISSING`（按表）两类待办，见【修订 B⑤】 | M13-4 |
+| ⑥ 设计态消费 | 定版标准对外提供查询接口，供新表建模与 AI 写 DDL 前先查（脚手架/MCP 接入） | M9/M13-5 |
+
+| 编号 | 功能 | 说明 | 版本 |
+|---|---|---|---|
+| M13-1 | 候选聚类生成 | 同名字段聚合 + 类型分布统计 + 同名不同型自动标冲突；通用名按释义拆组；空释义单独成组 | **V0.1** |
+| M13-2 | 定版工作台 | 全字段可编辑定版、相似标准提示（NAME/ALIAS/MEANING）、关联合并（`merge-into`）、Excel 上传导入 | **V0.1** |
+| M13-3 | 标准定义库 | 终版定义 + 业务标签（各业务域叫法）浏览与检索；标准定义库是唯一的搜索入口（原 M8 搜索页已移除） | **V0.1** |
+| M13-4 | 治理待办闭环 | 冲突/缺口两类待办的列表、筛选、采纳/豁免（原因留痕）/忽略 | **V0.1** |
+| M13-5 | 设计态查询 API / MCP | 按名称、释义、别名检索标准定义，供 AI 建表与设计评审消费 | V0.5 |
+| M13-6 | 标准覆盖率看板 | 已关联已定版标准的字段占比、符合/不符合数、收敛趋势 | V0.5 |
+
+**关键口径（踩过的坑，改动前请先读）**
+
+- 同名标准的唯一性是「标准名 + 释义组」而非只按名：`status`(运单状态) 与 `status`(工单状态) 允许并存，各代表一个概念；但**改名**撞上任何同名活跃标准一律 409 引导合并，防止定版出两个同义标准。
+- 释义级（通用名拆组）标准**不**把 `status` 这类裸名沉淀为业务别名，相似提示也跳过 NAME/ALIAS——否则等于把同名不同义又并回一个。
+- 治理扫描只纠正释义级标准的成员归属；挂在名级标准下的人工异名归组关系不被自动推翻。
+- `STANDARD_MISSING` 按表聚合，缺口清零自动关闭，人工豁免后只有缺口变大才重开。
+
+**状态机**：`standard_field.status` = `DRAFT`（候选）→ `CONFIRMED`（已定版）→ `DEPRECATED`；定版时若发现同义标准则本条转 `MERGED` 并记 `merged_into_id`，存量字段关联迁到目标标准。
+
+---
 
 ### 5.1 URN 设计
 
@@ -1412,6 +1476,65 @@ CREATE TABLE common_column_blacklist (
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ═══════════ M13 标准定义库（迁移 0007→0010，V0.1 已实现）═══════════
+-- 字段统一治理的核心实体，也是业务释义的唯一真相源；属知识层（collector 角色只读）
+CREATE TABLE standard_field (
+    id                BIGSERIAL PRIMARY KEY,
+    standard_name     VARCHAR(128) NOT NULL,   -- 标准字段名，可被人工改名定版
+    cluster_key       VARCHAR(128),            -- 候选来源字段名：改名/合并后重聚仍按它匹配，不复活重复候选
+    sub_key           VARCHAR(32)  NOT NULL DEFAULT '',
+        -- 通用字段名（status/type 等）同名不同义时按注释释义拆组的哈希；'' = 按字段名整体定标
+    merged_into_id    BIGINT REFERENCES standard_field(id),  -- 同义候选归并的目标标准
+    business_meaning  TEXT,                    -- 标准中文释义（唯一权威释义挂在这里，不挂字段上）
+    logical_type      VARCHAR(32)  NOT NULL,
+    raw_type          VARCHAR(128),            -- 标准类型含长度，如 varchar(16)；冲突组定版前为空
+    status            VARCHAR(16) DEFAULT 'DRAFT',     -- DRAFT / CONFIRMED / DEPRECATED / MERGED
+    source_type       VARCHAR(16) DEFAULT 'CLUSTER',   -- CLUSTER / IMPORT / MANUAL
+    has_conflict      BOOLEAN DEFAULT FALSE,           -- 组内逻辑类型不一致，必须人工裁决
+    type_distribution JSONB,                           -- {原始类型: 出现次数}，两路证据合并后的分布
+    candidate_count   INTEGER DEFAULT 0,               -- 源库同步中出现次数
+    doc_count         INTEGER DEFAULT 0,               -- Excel 文档中出现次数（并集的另一路）
+    version           INTEGER DEFAULT 1,
+    confirmed_by      BIGINT,
+    confirmed_at      TIMESTAMPTZ,
+    created_by        BIGINT,
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+-- 同名标准唯一性按「标准名 + 释义组」：status(运单状态) 与 status(工单状态) 可并存，各自不能重复
+CREATE UNIQUE INDEX uq_standard_field_active_name_sub ON standard_field(standard_name, sub_key)
+    WHERE status IN ('DRAFT', 'CONFIRMED');
+CREATE INDEX idx_standard_field_status ON standard_field(status);
+CREATE INDEX idx_standard_field_cluster_sub ON standard_field(cluster_key, sub_key);
+
+-- 标准与存量源字段的关联；conforms = 字段名与类型**都**符合标准（异名或异型都算不符合）
+CREATE TABLE standard_field_item (
+    id                BIGSERIAL PRIMARY KEY,
+    standard_field_id BIGINT NOT NULL REFERENCES standard_field(id),
+    column_urn        VARCHAR(768) NOT NULL,
+    conforms          BOOLEAN,                    -- 未定版时为 NULL
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(standard_field_id, column_urn)
+);
+CREATE INDEX idx_standard_field_item_urn ON standard_field_item(column_urn);
+
+-- Excel 历史数据字典的字段文档留档：与 column_meta 平级的第二路输入，按 source_file 幂等
+CREATE TABLE excel_field_doc (
+    id           BIGSERIAL PRIMARY KEY,
+    source_file  VARCHAR(255) NOT NULL,
+    sheet_name   VARCHAR(128),
+    table_name   VARCHAR(128) NOT NULL,
+    table_desc   TEXT,
+    column_name  VARCHAR(128) NOT NULL,
+    column_desc  TEXT,
+    column_type  VARCHAR(128),
+    remark       TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_excel_doc_column ON excel_field_doc(column_name);
+CREATE INDEX idx_excel_doc_table ON excel_field_doc(table_name, column_name);
+CREATE INDEX idx_excel_doc_file ON excel_field_doc(source_file);
+
 -- 【新增 B④】向量索引
 CREATE TABLE asset_embedding (
     urn         VARCHAR(768) PRIMARY KEY,
@@ -1527,7 +1650,9 @@ CREATE INDEX idx_sub_scope ON change_subscription(scope_type, scope_value) WHERE
 CREATE TABLE annotation_todo (
     id           BIGSERIAL PRIMARY KEY,
     urn          VARCHAR(768) NOT NULL,
-    todo_type    VARCHAR(32) NOT NULL,     -- NEW_COLUMN/REVIEW_DRAFT/CONFIRM_RENAME/MERGE_CONFLICT/HANDLE_FEEDBACK/MISSING_DICT
+    todo_type    VARCHAR(32) NOT NULL,     -- 已实现：STANDARD_CONFLICT(urn=字段，类型与标准不一致) /
+                                          -- STANDARD_MISSING(urn=**表**，该表仍有字段未关联已定版标准，按表聚合防刷屏)
+                                          -- 规划：NEW_COLUMN/REVIEW_DRAFT/CONFIRM_RENAME/MERGE_CONFLICT/HANDLE_FEEDBACK/MISSING_DICT
     domain_id    BIGINT,
     assignee_id  BIGINT,
     priority     INT DEFAULT 0,

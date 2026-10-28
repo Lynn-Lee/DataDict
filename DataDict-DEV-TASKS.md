@@ -186,6 +186,10 @@ PRD §8 定的 V0.1 周期是 **3~4 周**（15~20 工作日）。要在 4 周内
 
 ### V0.1 验收标准（全部满足方可进入 V0.5）
 
+> **【2026-10-27 口径修订】** 产品目标已明确为**字段定义统一治理**，权威模型改成「标准定义库是唯一真相源，
+> 字段只关联标准、不携带独立释义」（见 PRD M13）。下面第 1、4、5 条以"人工标注"为验收对象，已被取代，
+> 保留原文仅作历史记录；实际按本节末尾的新标准验收。
+
 1. 接入 2 个核心生产库，团队成员能搜到中文字段并看到人工标注
 2. 注释非空率与源库人工抽查（20 张表）一致
 3. `test_comment_not_all_empty` 与两项权限测试在 CI 中通过
@@ -193,6 +197,14 @@ PRD §8 定的 V0.1 周期是 **3~4 周**（15~20 工作日）。要在 4 周内
 5. 标注保存后立即可搜到（无刷新延迟）
 6. 产出去重率实测数据，并据此填定 V0.5 验收标准
 7. 产出检索阈值调优报告，阈值已写入迁移
+
+**修订后的验收标准（M13 口径）**
+
+- A1 接入 2 个核心生产库，源库字段可关联到标准定义，标准定义库可被检索与浏览（取代原 1、5）
+- A2 聚类生成的候选 + 人工定版跑通：`DRAFT → CONFIRMED`、同义候选可归并、同名不同义可按释义各自定版（取代原 4）
+- A3 同步后治理链路自动拦截新增/变更字段，产出 `STANDARD_CONFLICT` 与 `STANDARD_MISSING` 两类待办且可闭环处理
+- A4 标准覆盖率可度量（已关联已定版标准的字段占比 + 符合/不符合数）——**尚未实现，V0.5 首项**
+- A5 定版标准可被设计态消费（查询 API / MCP），AI 写 DDL 前能查到标准定义
 
 ### V0.1 开发执行记录
 
@@ -240,8 +252,42 @@ PRD §8 定的 V0.1 周期是 **3~4 周**（15~20 工作日）。要在 4 周内
 | 2026-10-27 | T-S10 定版全字段可编辑 + 相似标准提示 + 关联合并 | 已完成 | **问题**（用户指出）：原确认弹窗只能改释义、类型只能从实际分布里选，导致 `bill_code`（释义"运单号"）无法定版为 `waybill_no varchar(16)`，标准库会同时存在两个同义标准——与项目目标直接冲突。改造：① 确认弹窗**标准名/类型（含长度，AutoComplete 可自由填写）/逻辑类型（自动推导可改）/释义全部可编辑**；② 候选生成时按三路信号提示"标准库疑似已有同一概念"——NAME 同名 / ALIAS 命中已有标准的业务别名 / MEANING 释义 pg_trgm 相似（阈值 0.2，实测把 order_no→waybill_no 这类仅共享"编号"的噪音滤掉，保住 site_code→send_site_code 0.333 这类真同义），列表页与弹窗内均可一键关联；③ 新增 `POST /standard-fields/{id}/merge-into/{target_id}`：存量字段关联迁到目标、候选置 MERGED、来源字段名自动记为目标业务别名、conforms 重算；目标可以是已定版标准或另一个候选（同义候选先归并再定版）；④ **conforms 口径改为"字段名 + 类型都一致"**（标准叫 waybill_no varchar(16)，存量 bill_code varchar(32) 即不符合），符合率才反映真实治理进度；⑤ 改名撞已有活跃标准返回 409 + existing_id，前端转为"改为关联"引导；⑥ 新增 `cluster_key`（候选来源字段名）与 `merged_into_id`，聚类改按 cluster_key 匹配，**改名/合并后重新聚类不会复活重复候选**（迁移 `20261027_0009`，含回填）；⑦ 列表默认排除 MERGED；CONFIRMED 标准定义不被聚类覆盖但证据计数保持最新。 | 红灯：`pytest tests/api/test_standard_fields_api.py` 空标准名 422 用例；改名撞名 409 路径。绿灯：`.venv/bin/pytest -q`（164 passed）、`ruff`、`mypy app` 无错、`alembic upgrade head`（0009 含 cluster_key 回填）、`npm run build` 通过；集成实测：`bill_code` 候选自动提示 waybill_no（MEANING 0.167→阈值调优后仍命中同类）→ 改名 waybill_no 返回 409 附 existing_id → merge-into 后 12 个存量字段迁入、bill_code 列 conforms=False（异名）/waybill_no 列 True、别名标签自动加 `bill_code`、候选从列表消失、**重新聚类 generated=0 未复活**；候选→候选合并（site_type_code→site_type）与改名+自定义类型定版（site_type→site_type_code varchar(8)）均通过；浏览器实测 dest_site_code 关联流程与 scan_site_code 自定义 varchar(32)+改释义定版 |
 | 2026-10-27 | T-S11 通用字段名按「字段名 + 释义」拆分候选 | 已完成 | **问题**：`status`/`type`/`remark` 等通用字段名因同名不同义被整体排除在聚类之外，这些字段永远产不出候选、永远挂不上标准，与"源库每个字段最终都关联到标准定义库"的目标直接冲突。改造：① 命中 `common_column_blacklist` 的名字不再排除，聚类分组键换成 `(字段名, 释义哈希)`，`status`(运单状态) 与 `status`(工单状态) 各成独立候选，注释为空单独成一组；② 新增 `normalize_meaning()`（合并空白、去尾部句点/逗号/冒号、小写）+ `meaning_key()`（blake2b 截 12 位，空释义用固定占位，保证不与有释义组混桶）；③ `standard_field` 新增 `sub_key`，同名标准唯一性由 `uq_standard_field_active_name(standard_name)` 改为 `uq_standard_field_active_name_sub(standard_name, sub_key)`（partial `status IN ('DRAFT','CONFIRMED')`），另建 `idx_standard_field_cluster_sub(cluster_key, sub_key)`；聚类幂等匹配从 `cluster_key` 改为 `(cluster_key, sub_key)`，**重新聚类既不复活旧候选也不重复造新候选**（迁移 `20261027_0010`，加列时 `server_default=''` 回填历史行后去掉默认值）；④ 三处"同名即同概念"的下游口径按 `sub_key` 收窄：释义级候选不再获得 NAME/ALIAS 相似提示（只留 MEANING，避免兄弟组互相顶到第一位）、合并时**不**把通用名沉淀为业务别名、`load_split_names` 取代 `load_excluded_names`；⑤ 治理扫描改两级挂载——先按 `(字段名, meaning_key(注释))` 命中释义级标准，再回落字段名命中名级标准，找不到对应释义组的不挂载、不产生待办；⑥ 顺带修正 T-S10 遗留不一致：改名定版原先并不沉淀别名（前端却这么承诺），现在名级候选改名定版会把来源字段名记为业务别名，与合并行为一致；⑦ 契约与 UI：`StandardFieldOut.sub_key` 透出，工作台与终版库在字段名下方显示「按释义分组」标识，定版弹窗标题带本条释义、释义级候选隐藏别名提示，顶部说明文案由"黑名单已排除"改为"按释义拆组"，分页统计文案改为"候选定义"。 | 绿灯：`.venv/bin/pytest -q`（168 passed，含新增 5 个聚类/释义哈希用例：同名不同义拆组、归一化后同组、非通用名忽略注释差异、通用名两路证据按同释义合并、`meaning_key` 归一与空释义隔离）、`ruff check/format`、`mypy app` 无错、`alembic upgrade head` + `downgrade -1` + 再次 `upgrade head`、`npm run build` 通过；本地库集成实测（demo 里 `cust_tab_work_order.status`「状态」与 `orders.status`「订单状态」）：聚类产出 6 条 `status` 释义组 + 12 条 `remark` 组；两条同名候选**各自定版成功**并同为 CONFIRMED（`(status, 663b…)` / `(status, 306e…)` 并存，唯一索引不拦）；治理扫描后两个 `status` 列分别挂到自己那一组、conforms=true、无错挂无待办风暴；重新聚类 `generated=0 updated=2753`；释义级候选合并（`status` 空释义组→`status`(状态)）**未**产生 `status` 别名标签，而名级改名定版（`bill_code`→`bill_no_demo_t11`）正确沉淀 `bill_code` 别名；同名释义级候选在 DRAFT 列表中**不再**获得 NAME 提示，而 `ewb_no`「运单号」仍按 MEANING 1.0 命中已有标准；浏览器实测：库页与工作台显示「按释义分组」、定版弹窗标题为「确认标准定义 · remark（备注）」且无别名提示 |
 | 2026-10-27 | T-S12 同步后治理链路（增量聚类 + 缺口拦截） | 已完成 | **问题**：源库是定时同步的，但同步后只有「字段名能命中已定版标准」的字段会被处理——新表、新字段名挂不上任何标准时被**静默跳过**（聚类只在人手动点「重新聚类」时才跑），新字段悄悄进库无人拦截，正是本项目要消灭的混乱来源。改造：① `detect_and_log` 返回 `SchemaChangeSet`，`SyncResult` 带出本轮 `governed_column_urns`（新增/改型/改注释，删除与索引变更不参与）；② `generate_standard_field_candidates(column_names=…)` 支持**按字段名增量聚类**——按名而非按 URN 过滤，同名其他存量字段一起参与统计，否则类型分布与 candidate_count 失真；空变更集直接不发 SQL；③ 新增 `run_post_sync_governance()` 统一链路（增量聚类 → 扫描 → 缺口待办），cron 同步与手动同步都接上（`MetadataSyncScheduler._follow_up_governance`，治理失败只记日志、不改写同步结果，采集与治理写权限本就分离）；每日 03:30 兜底 job 改为**全量重聚 + 扫描**，兜住 Excel 新导入、标准新定版等无同步事件触发的变化；④ 扫描新增两条口径：注释变更导致释义组变化时自动**重挂/摘除**（只纠正释义级标准的成员，名级标准下可能是人工异名归组，扫描不推翻），conforms 随之重算；⑤ 仍未关联任何**已定版**标准的字段按**表聚合**产出新待办类型 `STANDARD_MISSING`（一表一条，payload 带缺口数 + 前 20 个字段预览 + 每个字段"有候选待定版/需新建标准"），缺口清零自动关闭（`action=AUTO_RESOLVED`），人工豁免/忽略后**只有缺口变大才重开**——沿用 T-S8a 防提醒风暴的口径；⑥ 决策规则抽成纯函数 `decide_attachment()` / `plan_missing_todo()` 做脱库单测；⑦ 待办 API 增加 `todo_type` 筛选，两类待办的 URN 不同（字段 / 表）故列表改用两次外连接，`resolve` 拒绝把表级缺口当字段「采纳标准」；⑧ 前端待办页改为类型标签 + 类型筛选 + 可展开字段清单 + 「去定标 / 查看该表」入口，扫描结果提示补齐重挂与缺口计数；`{id,urn}` 表级 URN 直接复用为 `/tables/:urn` 链接目标。 | 绿灯：`.venv/bin/pytest -q`（185 passed，新增 `tests/services/test_governance_rules.py` 8 条决策规则用例 + `tests/services/test_standard_field_incremental.py` 4 条增量取数 SQL 用例 + 4 条调度链用例：变更字段随同步传递、SKIPPED 不触发治理、治理异常不影响同步结果、每日 job 走全量）、`ruff check/format`、`mypy app` 无错、`npm run build` 通过；本地库集成实测：sweep-only 基线一次开出 9 条表级缺口待办；插入 `device_health`（全新字段名）+ `status`「设备状态」（通用名新释义）两个字段后走增量链路 → `scope=INCREMENTAL`、重聚字段名 2 个、`generated=2` 且只产出这两个名字的候选、对应表的缺口 `updated=1`；缺口不变时重扫 `created=0 updated=0`（不刷屏）；先定版 `status`(状态)/`status`(订单状态) 两组，把 orders.status 注释从「订单状态」改成「状态」→ `reattached=1` 且关联确实迁到另一组；再改成谁都不认识的「作废状态」→ `detached=1`、该表缺口从 6 涨到 7；豁免该表后重扫 `created=0`（SILENT 生效）；`GET /governance/todos` 同时返回两类待办且 `todo_type` 筛选正确；浏览器实测待办页类型标签、缺口行展开字段清单、「去定标 / 查看该表」入口与豁免弹窗文案 |
+| 2026-10-26 | 导航精简：移除「搜索」页，标准定义库为唯一搜索入口 | 已完成 | 按产品决策（字段统一治理为第一目标），删除前端 `SearchPage` 与 `api/search.ts`；菜单精简为 标准定义库 / 表目录 / 标准定义工作台 三项，登录后默认落地标准定义库；表详情「返回搜索」改「返回表目录」，登录/404 跳转目标同步更新。**保留**后端 `/api/v1/search` 接口与检索服务（API 消费方仍可用；字段级 UI 检索暂由表目录关键词过滤 + 表详情覆盖，未定版字段的注释/业务含义全文检索待标准定义覆盖后评估是否需要恢复）。 | `npm run build` 通过；浏览器实测：`/` 重定向 `/standard-library`、菜单三项无搜索、库页搜索/标签/抽屉功能不回归 |
 
-移除「搜索」页，标准定义库为唯一搜索入口 | 已完成 | 按产品决策（字段统一治理为第一目标），删除前端 `SearchPage` 与 `api/search.ts`；菜单精简为 标准定义库 / 表目录 / 标准定义工作台 三项，登录后默认落地标准定义库；表详情「返回搜索」改「返回表目录」，登录/404 跳转目标同步更新。**保留**后端 `/api/v1/search` 接口与检索服务（API 消费方仍可用；字段级 UI 检索暂由表目录关键词过滤 + 表详情覆盖，未定版字段的注释/业务含义全文检索待标准定义覆盖后评估是否需要恢复）。 | `npm run build` 通过；浏览器实测：`/` 重定向 `/standard-library`、菜单三项无搜索、库页搜索/标签/抽屉功能不回归 |
+### V0.1 收尾状态与下一步（截至 2026-10-28，供接手者直接续做）
+
+**已完成并推送**（提交都在 `origin/main`，CI 全绿；详细交付与验证见上面的执行记录）
+
+| 切片 | 内容 | 提交 |
+|---|---|---|
+| T-S1/S2 | `standard_field` / `standard_field_item` 模型与迁移 + 同名聚类服务 | 见执行记录 2026-10-26 |
+| T-S3/S6a | 定版工作台、标准定义库页面 + 业务标签 | 见执行记录 |
+| T-S5/S5b/S9 | Excel 历史字典解析、Web 上传导入、并与源库**平级**参与聚类 | 见执行记录 |
+| T-S7 | 数据源管理页（注册/编辑/连通测试/启停/手动同步） | 见执行记录 |
+| T-S8a/b/c | 治理扫描 + 待办闭环 API/页面 + 变更时间线 | 见执行记录 |
+| T-S10 | 定版全字段可编辑 + 相似标准提示 + 关联合并 + conforms 改「名+型」 | `d005d8d` |
+| T-S11 | 通用字段名按「字段名 + 释义」拆组（`sub_key`，迁移 `20261027_0010`） | `127ffa2` |
+| T-S12 | 同步后治理链路：增量聚类 + 释义组重挂 + `STANDARD_MISSING` 按表聚合 | `738033e` |
+| 导航调整 | 移除「搜索」页，标准定义库为唯一检索入口 | 见执行记录 |
+
+**下一步（按优先级，均未开始）**
+
+1. **T-S4 部署到测试环境 + 真实库跑批**（唯一的阻塞性缺口）
+   - 现状：`datadict.ops.rhint.cn`（`env: staging`）健康检查正常，但前端 bundle 里连「标准定义库」「数据源管理」都没有 → **部署版本早于 T-S6a**，这次要一次跨过 12 个切片与迁移 `20261026_0007 → 20261027_0010`。
+   - 动作：`pg_dump` 备份 → 确认 `deploy/.env` 的 `CREDENTIAL_SECRET_KEY` 仍是加密现有数据源密码的那把（换了对称解密会失败，同步直接 FAILED）→ `git pull && docker compose -f docker-compose.intranet.yml up -d --build`（entrypoint 自动 `alembic upgrade head` 并重跑 `grants.sql`）。部署属共享环境操作，由人工执行。
+   - 部署后立刻验：点「重新聚类」看真实库候选量 → 对 `prod_tidb_operdb` 手动同步，观察增量聚类与 `STANDARD_MISSING` 首轮开单量（每表一条；若太吵，按数据源再聚合一层，改动很小）→ 用 MySQL 采集器试连 StarRocks。
+2. **A4 标准覆盖率指标**：已关联 CONFIRMED 标准的字段占比 + 符合/不符合数，按数据源/表出，是治理收敛的唯一结果度量。
+3. **M13-5 设计态消费**：`GET /api/v1/standard-fields/library` 已可用，缺 MCP/脚手架接入与"按释义/别名查标准"的召回校准。
+4. **V0.5 计划需按 M13 口径重排**：现有 T10.x 仍以"标注提效"为目标，与「标准定义库是唯一真相源」冲突；批量标注模式（M6.2）已确认不做。
+5. 遗留验收项：T9.1/T9.2/T9.4 摸底与验收报告、检索阈值 `--no-fixture` 召回复调。
+
+**环境与验证备忘**
+
+- 本地栈：`docker compose up -d`（PostgreSQL pgvector/pg16 映射 **15432**、Redis **16379**），两个业务角色 `datadict_web` / `datadict_collector` 本地口令均为 `datadict`；迁移用 `ALEMBIC_DB_URL` 指向 superuser `postgres:postgres@localhost:15432/datadict`。
+- 仓库在 Synology 同步盘上，`git status` 常年显示 133 个文件"已修改"，实为权限位 `100644→100755` 噪音；用 `git -c core.fileMode=false <cmd>` 查看真实改动，只 add 相关文件（不要 `git add -A`）。
+- `.venv` 需用 uv 按 Docker 基线重建：`uv venv --python 3.11 && uv pip install -e ".[dev]"`（不要提交 `uv.lock`，构建路径不引用它）。
+- 验证命令：`uv run ruff format app tests && uv run ruff check app tests && uv run mypy app && uv run pytest -q`（基线 **185 passed**）；前端 `cd frontend && npm run build`（`tsc --noEmit && vite build`）；迁移可逆性 `alembic upgrade head && alembic downgrade -1 && alembic upgrade head`；demo 数据 `scripts/seed_standard_demo.py`（会清空并重建标准库相关表）。
+- 已知缺陷（未修）：`app/main.py` 的 lifespan 在启动失败时会调用 `sync_scheduler.shutdown()`，未启动时抛 `SchedulerNotRunningError` 掩盖真实异常（排查启动失败时容易误判）。
 
 ---
 
